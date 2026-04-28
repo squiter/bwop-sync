@@ -110,23 +110,36 @@ func (c *Client) GetItem(opID, vaultID string) (*Item, error) {
 	return &item, nil
 }
 
-// fullVaultPermissions is the complete set of permissions granted by grant-access.
-const fullVaultPermissions = "view_items,create_items,edit_items,archive_items,delete_items," +
-	"view_and_copy_passwords,view_item_history,import_items,export_items," +
-	"copy_and_share_items,print_items,manage_vault"
-
 // GrantVaultAccess grants a user full access to a vault.
+// It tries the Teams/Business permission set first, then falls back to the
+// Individual/Families set when the first is rejected by the account tier.
 // userEmail can be an email address, display name, or user UUID.
 func (c *Client) GrantVaultAccess(vaultID, userEmail string) error {
-	_, err := c.run("op", "vault", "user", "grant",
-		"--vault", vaultID,
-		"--user", userEmail,
-		"--permissions", fullVaultPermissions,
-	)
-	if err != nil {
-		return fmt.Errorf("op vault user grant: %w", err)
+	permSets := []string{
+		// Teams / Business granular permissions
+		"view_items,create_items,edit_items,archive_items,delete_items," +
+			"view_and_copy_passwords,view_item_history,import_items,export_items," +
+			"copy_and_share_items,print_items,manage_vault",
+		// Individual / Families permissions
+		"allow_viewing,allow_editing,allow_managing",
 	}
-	return nil
+
+	var lastErr error
+	for _, perms := range permSets {
+		_, err := c.run("op", "vault", "user", "grant",
+			"--vault", vaultID,
+			"--user", userEmail,
+			"--permissions", perms,
+		)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !strings.Contains(err.Error(), "not valid for your account tier") {
+			break
+		}
+	}
+	return fmt.Errorf("op vault user grant: %w", lastErr)
 }
 
 // CreateVault creates a new 1Password vault with the given name and returns it.
