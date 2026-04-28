@@ -1,5 +1,7 @@
 # compiled binaries
 bin/
+bwop-sync
+bwop-setup
 
 # Go build cache artifacts
 *.test
