@@ -1,9 +1,11 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/squiter/bwop-sync/internal/bitwarden"
 	"github.com/squiter/bwop-sync/internal/config"
@@ -21,12 +23,16 @@ func (f *fakeBW) ListItems() ([]bitwarden.Item, error) { return f.items, f.err }
 
 // fakeOP implements OPClient for tests.
 type fakeOP struct {
-	created []onepassword.Item
-	edited  []onepassword.Item
-	failOn  string // "create" or "edit" to simulate errors
+	created    []onepassword.Item
+	edited     []onepassword.Item
+	failOn     string // "create", "edit", or "ratelimit"
+	createCap  int    // stop returning success after this many creates (0 = unlimited)
 }
 
 func (f *fakeOP) CreateItem(item onepassword.Item) (*onepassword.Item, error) {
+	if f.failOn == "ratelimit" || (f.createCap > 0 && len(f.created) >= f.createCap) {
+		return nil, fmt.Errorf("Too many requests")
+	}
 	if f.failOn == "create" {
 		return nil, fmt.Errorf("injected create error")
 	}
@@ -36,12 +42,25 @@ func (f *fakeOP) CreateItem(item onepassword.Item) (*onepassword.Item, error) {
 }
 
 func (f *fakeOP) EditItem(opID string, item onepassword.Item) (*onepassword.Item, error) {
+	if f.failOn == "ratelimit" {
+		return nil, fmt.Errorf("Too many requests")
+	}
 	if f.failOn == "edit" {
 		return nil, fmt.Errorf("injected edit error")
 	}
 	item.ID = opID
 	f.edited = append(f.edited, item)
 	return &item, nil
+}
+
+// noSleep replaces time.Sleep in tests so rate-limit retry loops complete instantly.
+func noSleep(_ time.Duration) {}
+
+// newTestEngine creates an Engine with sleeps disabled.
+func newTestEngine(bw BWClient, op OPClient, cfg *config.Config, st *state.State, logDir string) *Engine {
+	e := New(bw, op, cfg, st, logDir)
+	e.sleep = noSleep
+	return e
 }
 
 func personalConfig() *config.Config {
@@ -76,7 +95,7 @@ func TestRun_dryRun_noWritesToOP(t *testing.T) {
 		loginItem("bw-1", "GitHub", "user@example.com", "s3cr3t"),
 	}}
 
-	engine := New(bw, op, personalConfig(), freshState(), t.TempDir())
+	engine := newTestEngine(bw, op, personalConfig(), freshState(), t.TempDir())
 	report, err := engine.Run(true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -96,7 +115,7 @@ func TestRun_realSync_createsNewItem(t *testing.T) {
 		loginItem("bw-1", "GitHub", "user@example.com", "s3cr3t"),
 	}}
 
-	engine := New(bw, op, personalConfig(), st, t.TempDir())
+	engine := newTestEngine(bw, op, personalConfig(), st, t.TempDir())
 	_, err := engine.Run(false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -127,7 +146,7 @@ func TestRun_realSync_updatesChangedItem(t *testing.T) {
 	// hash that won't match the current item.
 	st.Set("bw-1", "op-existing", "old-hash-that-wont-match")
 
-	engine := New(&fakeBW{items: []bitwarden.Item{item}}, op, personalConfig(), st, t.TempDir())
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{item}}, op, personalConfig(), st, t.TempDir())
 	report, err := engine.Run(false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -147,7 +166,7 @@ func TestRun_noChanges_skipsUpdate(t *testing.T) {
 	item := loginItem("bw-1", "GitHub", "user", "pass")
 
 	// First run: create item and record its hash.
-	engine := New(&fakeBW{items: []bitwarden.Item{item}}, op, personalConfig(), st, t.TempDir())
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{item}}, op, personalConfig(), st, t.TempDir())
 	if _, err := engine.Run(false); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +198,7 @@ func TestRun_passkey_skippedAndLogged(t *testing.T) {
 		},
 	}
 
-	engine := New(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), freshState(), t.TempDir())
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), freshState(), t.TempDir())
 	report, err := engine.Run(false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -205,7 +224,7 @@ func TestRun_noMapping_skipped(t *testing.T) {
 		Login:         &bitwarden.Login{Username: "u", Password: "p"},
 	}
 
-	engine := New(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), freshState(), t.TempDir())
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), freshState(), t.TempDir())
 	report, err := engine.Run(false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -224,7 +243,7 @@ func TestRun_createError_recordedInReport(t *testing.T) {
 		loginItem("bw-1", "GitHub", "user", "pass"),
 	}}
 
-	engine := New(bw, op, personalConfig(), freshState(), t.TempDir())
+	engine := newTestEngine(bw, op, personalConfig(), freshState(), t.TempDir())
 	report, err := engine.Run(false)
 	if err != nil {
 		t.Fatalf("unexpected top-level error: %v", err)
@@ -245,7 +264,7 @@ func TestRun_deletedItem_ignored(t *testing.T) {
 		DeletedDate: &deletedDate,
 	}
 
-	engine := New(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), freshState(), t.TempDir())
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), freshState(), t.TempDir())
 	report, err := engine.Run(false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -292,5 +311,59 @@ func TestFormatReport_includesPasskeyWarning(t *testing.T) {
 	out := FormatReport(r)
 	if !strings.Contains(out, "passkey") {
 		t.Errorf("expected passkey warning in formatted report:\n%s", out)
+	}
+}
+
+func TestRun_rateLimitExhausted_abortsAndSavesProgress(t *testing.T) {
+	// First item succeeds, second triggers rate limit on every attempt.
+	op := &fakeOP{createCap: 1}
+	bw := &fakeBW{items: []bitwarden.Item{
+		loginItem("bw-1", "GitHub", "user", "pass"),
+		loginItem("bw-2", "GitLab", "user", "pass"),
+	}}
+	st := freshState()
+	engine := newTestEngine(bw, op, personalConfig(), st, t.TempDir())
+
+	report, err := engine.Run(false)
+
+	if err == nil {
+		t.Fatal("expected ErrRateLimitExhausted, got nil")
+	}
+	if !errors.Is(err, ErrRateLimitExhausted) {
+		t.Fatalf("expected ErrRateLimitExhausted, got: %v", err)
+	}
+	// First item must be in state even though the run aborted.
+	if _, ok := st.Get("bw-1"); !ok {
+		t.Error("completed item should be saved in state before abort")
+	}
+	// Remaining items count should reflect the abort point.
+	if report.RemainingItems == 0 {
+		t.Error("expected RemainingItems > 0 on rate-limit abort")
+	}
+}
+
+func TestRun_createdItem_hasHiddenBWIDField(t *testing.T) {
+	op := &fakeOP{}
+	bw := &fakeBW{items: []bitwarden.Item{
+		loginItem("bw-42", "GitHub", "user", "pass"),
+	}}
+	engine := newTestEngine(bw, op, personalConfig(), freshState(), t.TempDir())
+
+	_, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(op.created) != 1 {
+		t.Fatalf("expected 1 created item, got %d", len(op.created))
+	}
+	var found bool
+	for _, f := range op.created[0].Fields {
+		if f.ID == "bwop_sync_bw_id" && f.Value == "bw-42" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("created item should contain hidden bwop_sync_bw_id field with the BW item ID")
 	}
 }

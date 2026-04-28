@@ -125,12 +125,14 @@ type Engine struct {
 	state    *state.State
 	logDir   string
 	Progress ProgressFunc
+	// sleep is time.Sleep in production; replaced in tests to avoid real waits.
+	sleep func(time.Duration)
 }
 
 // New creates an Engine ready to run.
 // Both *bitwarden.Client and *onepassword.Client satisfy the interface parameters.
 func New(bw BWClient, op OPClient, cfg *config.Config, st *state.State, logDir string) *Engine {
-	return &Engine{bw: bw, op: op, cfg: cfg, state: st, logDir: logDir}
+	return &Engine{bw: bw, op: op, cfg: cfg, state: st, logDir: logDir, sleep: time.Sleep}
 }
 
 // Run executes the sync. When dryRun is true, no writes are performed to 1Password.
@@ -351,7 +353,7 @@ func (e *Engine) editWithRetry(opID string, item onepassword.Item) (*onepassword
 func (e *Engine) opWithRetry(fn func() (*onepassword.Item, error)) (*onepassword.Item, error) {
 	var err error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		time.Sleep(opDelay)
+		e.sleep(opDelay)
 		var result *onepassword.Item
 		result, err = fn()
 		if err == nil {
@@ -367,7 +369,7 @@ func (e *Engine) opWithRetry(fn func() (*onepassword.Item, error)) (*onepassword
 		if e.Progress != nil {
 			e.Progress(ActionSkip, fmt.Sprintf("rate-limited, waiting %s…", wait.Round(time.Second)), nil)
 		}
-		time.Sleep(wait)
+		e.sleep(wait)
 	}
 	return nil, err
 }
