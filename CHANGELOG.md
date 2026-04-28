@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-28
+
+### Fixed
+- `grant-access`: automatically falls back to the Individual/Families permission set (`allow_viewing,allow_editing,allow_managing`) when the Teams/Business granular permissions are rejected by the account tier
+- `grant-access`: account picker now correctly resolves a number to the corresponding email instead of using the literal input as the username
+
 ## [0.4.0] - 2026-04-28
 
 ### Added
