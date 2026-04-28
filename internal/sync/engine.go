@@ -37,7 +37,7 @@ var rateLimitBackoff = [maxRetries]time.Duration{
 // ErrRateLimitExhausted is returned by Run when every retry for a single item
 // fails with a rate-limit response. The run is aborted so the caller can tell
 // the user to wait before retrying; state is saved for completed items.
-var ErrRateLimitExhausted = errors.New("1Password rate limit exhausted — wait 10–15 minutes and run sync again")
+var ErrRateLimitExhausted = errors.New("1Password rate limit exhausted — wait 30+ minutes and run sync again (no duplicates: progress is saved)")
 
 // BWClient is the interface the engine needs from the Bitwarden client.
 // *bitwarden.Client satisfies this interface.

@@ -105,6 +105,30 @@ debug record when something unexpected happens from the scheduled run.
 
 ---
 
+## Rate limiting
+
+1Password service accounts have a write quota (~40 writes/minute in practice).
+For large vaults this means a full first sync will be interrupted by rate limiting.
+
+**This is safe.** bwop-sync saves progress after every successful item, so re-running
+the sync never creates duplicates — it simply resumes from where it left off.
+
+What the output looks like when the limit is hit:
+
+```
+[SYNC] 80 created, 0 updated, 9 skipped, 9 passkeys, 1 errors
+Error: ⏳ 1Password rate limit exhausted — wait 30+ minutes and run sync again
+```
+
+Just wait 30+ minutes and run `bwop-sync sync` again. Each re-run makes progress
+until everything is synced. Subsequent syncs (after the initial import) are fast
+because unchanged items are skipped entirely.
+
+> **Tip:** if you're importing a large vault for the first time, schedule the first
+> sync before you go to sleep — it may take a few runs across an hour or two.
+
+---
+
 ## Session management
 
 The Bitwarden session token expires when the vault locks. Refresh it with:

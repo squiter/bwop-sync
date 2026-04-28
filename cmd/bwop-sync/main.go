@@ -65,6 +65,7 @@ vault mapping created by bwop-setup.
 
 Before each real sync, backups of both vaults are saved to
 ~/.config/bwop-sync/backups/ and a dry-run is logged automatically.`,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSync(dryRun)
 		},
@@ -87,6 +88,7 @@ Use this if state.json was accidentally deleted or corrupted. Items created
 before tagging was introduced (bwop-sync v0.3.0) won't have the tag and
 will be treated as new on the next sync, which may produce duplicates for
 those items only.`,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRecover()
 		},
@@ -195,6 +197,7 @@ func backfillCmd() *cobra.Command {
 		Long: `backfill reads state.json and adds the hidden bwop_sync_bw_id field to every
 1Password item that was created before v0.3.0. This is a one-time migration
 step; once done, bwop-sync recover can rebuild state.json from the items alone.`,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBackfill()
 		},
