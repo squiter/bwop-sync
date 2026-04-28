@@ -148,10 +148,52 @@ All runtime files live in `~/.config/bwop-sync/`:
 | File | Purpose |
 |------|---------|
 | `mapping.json` | Bitwarden collection → 1Password vault mapping |
-| `state.json` | BW item ID → 1P item ID mapping (used for updates) |
+| `state.json` | BW item ID → 1P item ID + content hash (used for updates) |
 | `passkey-log.json` | Passkeys that were skipped — manual action required |
 | `logs/` | Dry-run and sync logs |
 | `backups/` | Pre-sync snapshots of both vaults (BW full export + 1P item list) |
+
+---
+
+## How state tracking works
+
+`state.json` is the memory of bwop-sync. It maps every Bitwarden item ID to its
+corresponding 1Password item ID, plus a SHA-256 hash of the item's content fields.
+
+On each sync run:
+- **New item** (not in state) → created in 1Password, entry added to state
+- **Changed item** (hash differs) → updated in 1Password, hash updated in state
+- **Unchanged item** (same hash) → skipped, no API call made
+
+Every 1Password item created by bwop-sync also carries a hidden concealed field
+(`bwop_sync_bw_id`) with the source Bitwarden ID. This field is invisible in the
+1Password sidebar and exists only so that state can be rebuilt if `state.json` is
+ever lost.
+
+### Recovering a lost state.json
+
+If `state.json` is accidentally deleted, run:
+
+```bash
+bwop-sync recover
+```
+
+This scans every mapped 1Password vault for the `bwop_sync_bw_id` hidden field and
+rebuilds `state.json` from it. Items created before v0.3.0 won't have the field and
+will be treated as new on the next sync (producing duplicates for those items only).
+
+### Migrating items created before v0.3.0
+
+If you already had items in 1Password when you upgraded to v0.3.0, stamp the hidden
+field onto them with:
+
+```bash
+bwop-sync backfill
+```
+
+Run this once after upgrading. It reads `state.json`, finds each 1Password item, and
+adds the `bwop_sync_bw_id` field without touching any other data. After backfill,
+`recover` will work for all your items.
 
 ---
 
