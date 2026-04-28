@@ -277,7 +277,7 @@ func runBackfill() error {
 
 		full.Fields = append(full.Fields, transformer.BwIDField(bwID))
 
-		if _, err := opClient.EditItem(entry.OPID, *full); err != nil {
+		if err := backfillEdit(opClient, entry.OPID, *full); err != nil {
 			fmt.Printf("  %s %s — edit failed: %v\n", red("✗"), full.Title, err)
 			failed++
 			continue
@@ -290,6 +290,27 @@ func runBackfill() error {
 	fmt.Printf("\n%s %d stamped, %d already set, %d failed\n",
 		bold("Done"), done, skipped, failed)
 	return nil
+}
+
+// backfillEdit applies the same 700 ms pacing + rate-limit retry as the sync
+// engine so that backfill doesn't hit the 1Password service-account cap.
+func backfillEdit(opClient *onepassword.Client, opID string, item onepassword.Item) error {
+	backoff := []time.Duration{15 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second}
+	var err error
+	for attempt := 0; attempt <= len(backoff); attempt++ {
+		time.Sleep(700 * time.Millisecond)
+		_, err = opClient.EditItem(opID, item)
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "Too many requests") || attempt == len(backoff) {
+			break
+		}
+		wait := backoff[attempt]
+		fmt.Printf("\n  %s rate-limited, waiting %s…\n  ", yellow("⏳"), wait.Round(time.Second))
+		time.Sleep(wait)
+	}
+	return err
 }
 
 func versionCmd() *cobra.Command {
