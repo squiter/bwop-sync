@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-28
+
+### Added
+- Create new 1Password vaults directly from the setup vault mapping step
+- Makefile with `build`, `setup`, `sync`, `dry-run`, `test`, `install`, `clean` targets
+- `/bump-version` Claude Code skill for automated changelog + tag + push
+- Release installation instructions in README (download binaries, Gatekeeper note)
+
+### Improved
+- Setup always offers the option to use a service account token even when the 1Password.app integration is available — with a clear recommendation for launchd use
+- Service account token is verified immediately after entry (vault list check with retry loop) — invalid tokens and missing vault permissions are caught before setup continues
+- Existing Bitwarden session is reused if still valid — no password prompt on re-runs
+- Guard against overwriting an existing vault mapping during setup re-runs
+- All `op` CLI errors now include the actual stderr message instead of a bare exit code
+- Service account token is trimmed before use to guard against invisible whitespace from pasting
+
 ## [0.1.0] - 2026-04-28
 
 ### Added
@@ -31,5 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions release workflow — triggers on `v*` tags, cross-compiles for darwin/amd64 and darwin/arm64, publishes GitHub Release with binaries and checksums
 - Makefile with `build`, `setup`, `sync`, `dry-run`, `test`, `install`, `clean` targets
 
-[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/squiter/bwop-sync/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/squiter/bwop-sync/releases/tag/v0.1.0
