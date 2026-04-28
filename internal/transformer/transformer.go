@@ -234,7 +234,8 @@ func cardExpiry(month, year string) string {
 	if month == "" && year == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/%s", month, year)
+	// 1Password monthYear fields require YYYY/MM format.
+	return fmt.Sprintf("%s/%02s", year, month)
 }
 
 // computeHash returns a SHA-256 fingerprint of the item's content fields so the

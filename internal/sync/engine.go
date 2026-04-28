@@ -17,11 +17,20 @@ import (
 )
 
 // opDelay is the minimum pause between consecutive 1Password API calls.
-// 1Password service accounts are rate-limited to ~250 requests/minute.
-const opDelay = 250 * time.Millisecond
+// 1Password service accounts allow ~100 writes/minute; 700ms keeps us safely under that.
+const opDelay = 700 * time.Millisecond
 
 // maxRetries is how many times to retry after a rate-limit response before giving up.
 const maxRetries = 4
+
+// rateLimitBackoff is the wait time before each successive retry on rate-limit errors.
+// Starts at 15s and doubles: 15s, 30s, 60s, 120s.
+var rateLimitBackoff = [maxRetries]time.Duration{
+	15 * time.Second,
+	30 * time.Second,
+	60 * time.Second,
+	120 * time.Second,
+}
 
 // BWClient is the interface the engine needs from the Bitwarden client.
 // *bitwarden.Client satisfies this interface.
@@ -308,39 +317,36 @@ func WritePasskeyLog(entries []PasskeyEntry, path string) error {
 }
 
 // createWithRetry calls CreateItem, retrying on rate-limit errors with
-// exponential backoff. A fixed opDelay is applied before every attempt.
+// increasing backoff. A fixed opDelay is applied before every attempt.
 func (e *Engine) createWithRetry(item onepassword.Item) (*onepassword.Item, error) {
-	var err error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		time.Sleep(opDelay)
-		var created *onepassword.Item
-		created, err = e.op.CreateItem(item)
-		if err == nil {
-			return created, nil
-		}
-		if !isRateLimit(err) || attempt == maxRetries {
-			break
-		}
-		wait := time.Duration(1<<attempt) * time.Second
-		time.Sleep(wait)
-	}
-	return nil, err
+	return e.opWithRetry(func() (*onepassword.Item, error) {
+		return e.op.CreateItem(item)
+	})
 }
 
 // editWithRetry calls EditItem with the same retry strategy as createWithRetry.
 func (e *Engine) editWithRetry(opID string, item onepassword.Item) (*onepassword.Item, error) {
+	return e.opWithRetry(func() (*onepassword.Item, error) {
+		return e.op.EditItem(opID, item)
+	})
+}
+
+func (e *Engine) opWithRetry(fn func() (*onepassword.Item, error)) (*onepassword.Item, error) {
 	var err error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		time.Sleep(opDelay)
-		var updated *onepassword.Item
-		updated, err = e.op.EditItem(opID, item)
+		var result *onepassword.Item
+		result, err = fn()
 		if err == nil {
-			return updated, nil
+			return result, nil
 		}
 		if !isRateLimit(err) || attempt == maxRetries {
 			break
 		}
-		wait := time.Duration(1<<attempt) * time.Second
+		wait := rateLimitBackoff[attempt]
+		if e.Progress != nil {
+			e.Progress(ActionSkip, fmt.Sprintf("rate-limited, waiting %s…", wait.Round(time.Second)), nil)
+		}
 		time.Sleep(wait)
 	}
 	return nil, err

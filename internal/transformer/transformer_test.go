@@ -145,7 +145,7 @@ func TestTransform_card(t *testing.T) {
 	if fieldMap["ccnum"].Value != "4111111111111111" {
 		t.Errorf("unexpected card number: %q", fieldMap["ccnum"].Value)
 	}
-	if fieldMap["expiry"].Value != "12/2028" {
+	if fieldMap["expiry"].Value != "2028/12" {
 		t.Errorf("unexpected expiry: %q", fieldMap["expiry"].Value)
 	}
 }

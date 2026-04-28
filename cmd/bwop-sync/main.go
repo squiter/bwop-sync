@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -168,6 +169,8 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 			fmt.Print(green("+"))
 		case action == sync.ActionUpdate:
 			fmt.Print(cyan("~"))
+		case strings.HasSuffix(name, "…"): // rate-limit notice from retry
+			fmt.Printf("\n  %s %s\n  ", yellow("⏳"), name)
 		default:
 			fmt.Print(gray("."))
 		}
