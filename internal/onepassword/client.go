@@ -25,7 +25,7 @@ func New(token string) *Client {
 		run: func(name string, args ...string) ([]byte, error) {
 			cmd := exec.Command(name, args...)
 			cmd.Env = append(os.Environ(), "OP_SERVICE_ACCOUNT_TOKEN="+token)
-			return cmd.Output()
+			return runWithStderr(cmd)
 		},
 	}
 }
@@ -36,9 +36,24 @@ func New(token string) *Client {
 func NewFromEnv(account string) *Client {
 	return &Client{
 		run: func(name string, args ...string) ([]byte, error) {
-			return exec.Command(name, withAccount(account, args)...).Output()
+			return runWithStderr(exec.Command(name, withAccount(account, args)...))
 		},
 	}
+}
+
+// runWithStderr runs cmd and, on failure, appends op's stderr to the error so
+// callers see the actual message instead of a bare "exit status N".
+func runWithStderr(cmd *exec.Cmd) ([]byte, error) {
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
+	}
+	return out, err
 }
 
 // newWithRunner creates a Client with a custom RunFunc — used in tests.

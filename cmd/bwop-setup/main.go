@@ -250,8 +250,8 @@ func configureOnePassword(account string) (string, error) {
 	}
 
 	for {
-		token := promptSecret("Service account token (or press Enter to abort)")
-		if strings.TrimSpace(token) == "" {
+		token := strings.TrimSpace(promptSecret("Service account token (or press Enter to abort)"))
+		if token == "" {
 			if appWorks {
 				fmt.Println("✓ Using 1Password.app integration")
 				_ = keychain.Store(keychain.AccountOPToken, "")
