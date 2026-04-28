@@ -1,0 +1,115 @@
+package bitwarden
+
+import (
+	"fmt"
+	"testing"
+)
+
+func TestListItems_success(t *testing.T) {
+	payload := `[
+		{"id":"abc","type":1,"name":"GitHub","login":{"username":"user@example.com","password":"s3cr3t","totp":"","uris":[{"uri":"https://github.com"}],"fido2Credentials":[]}}
+	]`
+
+	c := newWithRunner("test-session", func(name string, args ...string) ([]byte, error) {
+		return []byte(payload), nil
+	})
+
+	items, err := c.ListItems()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Name != "GitHub" {
+		t.Errorf("expected name 'GitHub', got %q", items[0].Name)
+	}
+	if items[0].Login == nil {
+		t.Fatal("expected Login to be non-nil")
+	}
+	if items[0].Login.Username != "user@example.com" {
+		t.Errorf("unexpected username: %q", items[0].Login.Username)
+	}
+}
+
+func TestListItems_cliError(t *testing.T) {
+	c := newWithRunner("bad-session", func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("exit status 1")
+	})
+
+	_, err := c.ListItems()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestListItems_invalidJSON(t *testing.T) {
+	c := newWithRunner("test-session", func(name string, args ...string) ([]byte, error) {
+		return []byte(`not json`), nil
+	})
+
+	_, err := c.ListItems()
+	if err == nil {
+		t.Fatal("expected JSON parse error, got nil")
+	}
+}
+
+func TestListCollections_success(t *testing.T) {
+	payload := `[{"id":"col1","organizationId":"org1","name":"Work"}]`
+	c := newWithRunner("test-session", func(name string, args ...string) ([]byte, error) {
+		return []byte(payload), nil
+	})
+
+	cols, err := c.ListCollections()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cols) != 1 {
+		t.Fatalf("expected 1 collection, got %d", len(cols))
+	}
+	if cols[0].Name != "Work" {
+		t.Errorf("expected 'Work', got %q", cols[0].Name)
+	}
+}
+
+func TestIsSessionValid_unlocked(t *testing.T) {
+	c := newWithRunner("test-session", func(name string, args ...string) ([]byte, error) {
+		return []byte(`{"status":"unlocked"}`), nil
+	})
+	if !c.IsSessionValid() {
+		t.Error("expected session to be valid")
+	}
+}
+
+func TestIsSessionValid_locked(t *testing.T) {
+	c := newWithRunner("bad-session", func(name string, args ...string) ([]byte, error) {
+		return []byte(`{"status":"locked"}`), nil
+	})
+	if c.IsSessionValid() {
+		t.Error("expected session to be invalid")
+	}
+}
+
+func TestHasPasskey(t *testing.T) {
+	withPasskey := Item{
+		ID:   "pk1",
+		Type: TypeLogin,
+		Name: "Apple ID",
+		Login: &Login{
+			Fido2Credentials: []Fido2Credential{{CredentialID: "cred1"}},
+		},
+	}
+	withoutPasskey := Item{
+		ID:    "l1",
+		Type:  TypeLogin,
+		Name:  "GitHub",
+		Login: &Login{},
+	}
+
+	if !withPasskey.HasPasskey() {
+		t.Error("expected HasPasskey() = true")
+	}
+	if withoutPasskey.HasPasskey() {
+		t.Error("expected HasPasskey() = false")
+	}
+}

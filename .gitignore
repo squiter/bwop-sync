@@ -1,0 +1,18 @@
+# compiled binaries
+bin/
+
+# Go build cache artifacts
+*.test
+*.out
+
+# macOS
+.DS_Store
+
+# editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# bls scratch directory (global gitignore usually covers this, belt-and-suspenders)
+/bls/
