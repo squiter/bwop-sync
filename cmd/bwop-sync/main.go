@@ -365,8 +365,12 @@ func runGrantAccess(email string) error {
 			for i, a := range accounts {
 				fmt.Printf("  %d) %s (%s)\n", i+1, a.Email, a.URL)
 			}
-			fmt.Print("Enter your email: ")
-			fmt.Scanln(&email)
+			fmt.Print("Enter number: ")
+			var choice int
+			fmt.Scanln(&choice)
+			if choice >= 1 && choice <= len(accounts) {
+				email = accounts[choice-1].Email
+			}
 		}
 	}
 

@@ -110,12 +110,18 @@ func (c *Client) GetItem(opID, vaultID string) (*Item, error) {
 	return &item, nil
 }
 
-// GrantVaultAccess grants a user access to a vault.
+// fullVaultPermissions is the complete set of permissions granted by grant-access.
+const fullVaultPermissions = "view_items,create_items,edit_items,archive_items,delete_items," +
+	"view_and_copy_passwords,view_item_history,import_items,export_items," +
+	"copy_and_share_items,print_items,manage_vault"
+
+// GrantVaultAccess grants a user full access to a vault.
 // userEmail can be an email address, display name, or user UUID.
 func (c *Client) GrantVaultAccess(vaultID, userEmail string) error {
 	_, err := c.run("op", "vault", "user", "grant",
 		"--vault", vaultID,
 		"--user", userEmail,
+		"--permissions", fullVaultPermissions,
 	)
 	if err != nil {
 		return fmt.Errorf("op vault user grant: %w", err)
