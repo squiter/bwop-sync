@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binaries
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          mkdir -p dist
+
+          GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/bwop-sync_darwin_amd64   ./cmd/bwop-sync
+          GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/bwop-setup_darwin_amd64  ./cmd/bwop-setup
+          GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/bwop-sync_darwin_arm64   ./cmd/bwop-sync
+          GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/bwop-setup_darwin_arm64  ./cmd/bwop-setup
+
+          cd dist && sha256sum * > checksums.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "bwop-sync $GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/bwop-sync_darwin_amd64 \
+            dist/bwop-setup_darwin_amd64 \
+            dist/bwop-sync_darwin_arm64 \
+            dist/bwop-setup_darwin_arm64 \
+            dist/checksums.txt
