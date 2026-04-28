@@ -16,6 +16,13 @@ import (
 	"github.com/squiter/bwop-sync/internal/transformer"
 )
 
+// opDelay is the minimum pause between consecutive 1Password API calls.
+// 1Password service accounts are rate-limited to ~250 requests/minute.
+const opDelay = 250 * time.Millisecond
+
+// maxRetries is how many times to retry after a rate-limit response before giving up.
+const maxRetries = 4
+
 // BWClient is the interface the engine needs from the Bitwarden client.
 // *bitwarden.Client satisfies this interface.
 type BWClient interface {
@@ -166,7 +173,7 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 				Hash:      result.Hash,
 			}
 			if !dryRun {
-				created, err := e.op.CreateItem(*result.OPItem)
+				created, err := e.createWithRetry(*result.OPItem)
 				if err != nil {
 					report.Errors = append(report.Errors, fmt.Sprintf("create %q: %v", item.Name, err))
 					e.progress(ActionCreate, item.Name, err)
@@ -193,7 +200,7 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 			Hash:      result.Hash,
 		}
 		if !dryRun {
-			_, err := e.op.EditItem(existing.OPID, *result.OPItem)
+			_, err := e.editWithRetry(existing.OPID, *result.OPItem)
 			if err != nil {
 				report.Errors = append(report.Errors, fmt.Sprintf("update %q: %v", item.Name, err))
 				e.progress(ActionUpdate, item.Name, err)
@@ -298,6 +305,49 @@ func WritePasskeyLog(entries []PasskeyEntry, path string) error {
 		return fmt.Errorf("marshaling passkey log: %w", err)
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+// createWithRetry calls CreateItem, retrying on rate-limit errors with
+// exponential backoff. A fixed opDelay is applied before every attempt.
+func (e *Engine) createWithRetry(item onepassword.Item) (*onepassword.Item, error) {
+	var err error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		time.Sleep(opDelay)
+		var created *onepassword.Item
+		created, err = e.op.CreateItem(item)
+		if err == nil {
+			return created, nil
+		}
+		if !isRateLimit(err) || attempt == maxRetries {
+			break
+		}
+		wait := time.Duration(1<<attempt) * time.Second
+		time.Sleep(wait)
+	}
+	return nil, err
+}
+
+// editWithRetry calls EditItem with the same retry strategy as createWithRetry.
+func (e *Engine) editWithRetry(opID string, item onepassword.Item) (*onepassword.Item, error) {
+	var err error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		time.Sleep(opDelay)
+		var updated *onepassword.Item
+		updated, err = e.op.EditItem(opID, item)
+		if err == nil {
+			return updated, nil
+		}
+		if !isRateLimit(err) || attempt == maxRetries {
+			break
+		}
+		wait := time.Duration(1<<attempt) * time.Second
+		time.Sleep(wait)
+	}
+	return nil, err
+}
+
+func isRateLimit(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Too many requests")
 }
 
 func (e *Engine) progress(action Action, name string, err error) {

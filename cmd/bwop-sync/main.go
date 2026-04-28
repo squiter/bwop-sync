@@ -19,6 +19,24 @@ import (
 // version is set at build time via -ldflags "-X main.version=vX.Y.Z".
 var version = "dev"
 
+// ANSI colour helpers — no external dependency needed on macOS.
+const (
+	colorReset  = "\033[0m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorRed    = "\033[31m"
+	colorCyan   = "\033[36m"
+	colorGray   = "\033[90m"
+	colorBold   = "\033[1m"
+)
+
+func green(s string) string  { return colorGreen + s + colorReset }
+func yellow(s string) string { return colorYellow + s + colorReset }
+func red(s string) string    { return colorRed + s + colorReset }
+func cyan(s string) string   { return colorCyan + s + colorReset }
+func gray(s string) string   { return colorGray + s + colorReset }
+func bold(s string) string   { return colorBold + s + colorReset }
+
 func main() {
 	root := &cobra.Command{
 		Use:   "bwop-sync",
@@ -137,25 +155,25 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 	}
 	preDryPath, err := sync.WriteLog(preDryReport, logDir, "pre-sync")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not write pre-sync log: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s could not write pre-sync log: %v\n", yellow("⚠"), err)
 	} else {
-		fmt.Printf("Pre-sync dry-run logged → %s\n", preDryPath)
+		fmt.Printf("%s Pre-sync dry-run → %s\n", gray("○"), gray(preDryPath))
 	}
 
 	engine.Progress = func(action sync.Action, name string, err error) {
 		switch {
 		case err != nil:
-			fmt.Print("!")
+			fmt.Print(red("!"))
 		case action == sync.ActionCreate:
-			fmt.Print("+")
+			fmt.Print(green("+"))
 		case action == sync.ActionUpdate:
-			fmt.Print("~")
+			fmt.Print(cyan("~"))
 		default:
-			fmt.Print(".")
+			fmt.Print(gray("."))
 		}
 	}
 
-	fmt.Print("Syncing ")
+	fmt.Print(bold("Syncing "))
 	report, err := engine.Run(false)
 	fmt.Println()
 	if err != nil {
@@ -174,19 +192,19 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 	if len(report.Passkeys) > 0 {
 		passKeyLogPath := filepath.Join(cfgDir, "passkey-log.json")
 		if err := sync.WritePasskeyLog(report.Passkeys, passKeyLogPath); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not write passkey log: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s could not write passkey log: %v\n", yellow("⚠"), err)
 		} else {
-			fmt.Printf("⚠  %d passkey(s) skipped — see %s\n", len(report.Passkeys), passKeyLogPath)
+			fmt.Printf("%s %d passkey(s) require manual action — %s\n", yellow("⚠"), len(report.Passkeys), gray(passKeyLogPath))
 		}
 	}
 
-	fmt.Println(report.Summary())
+	fmt.Println(bold(report.Summary()))
 	if syncLogPath != "" {
-		fmt.Printf("Sync log → %s\n", syncLogPath)
+		fmt.Printf("%s %s\n", gray("log"), gray(syncLogPath))
 	}
 
 	if len(report.Errors) > 0 {
-		return fmt.Errorf("%d error(s) occurred during sync — check the log for details", len(report.Errors))
+		return fmt.Errorf(red("%d error(s) occurred during sync — check the log for details"), len(report.Errors))
 	}
 	return nil
 }
@@ -204,16 +222,16 @@ func runBackups(bwClient *bitwarden.Client, opClient *onepassword.Client, cfg *c
 
 	bwPath := filepath.Join(backupDir, "bw-"+ts+".json")
 	if err := bwClient.Export(bwPath); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: Bitwarden backup failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s Bitwarden backup failed: %v\n", yellow("⚠"), err)
 	} else {
-		fmt.Printf("Bitwarden backup → %s\n", bwPath)
+		fmt.Printf("%s Bitwarden backup → %s\n", green("✓"), gray(bwPath))
 	}
 
 	opPath := filepath.Join(backupDir, "op-"+ts+".json")
 	if err := backupOnePassword(opClient, cfg, opPath); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: 1Password backup failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s 1Password backup failed: %v\n", yellow("⚠"), err)
 	} else {
-		fmt.Printf("1Password backup  → %s\n", opPath)
+		fmt.Printf("%s 1Password backup → %s\n", green("✓"), gray(opPath))
 	}
 }
 
