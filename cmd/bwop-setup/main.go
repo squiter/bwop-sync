@@ -184,24 +184,32 @@ func selectOPAccount() (string, error) {
 	return chosen.Shorthand, nil
 }
 
-// configureOnePassword detects how op is authenticated for the chosen account
-// and stores a token in Keychain if one is needed. It tries three paths:
-//  1. op already works as-is with the chosen account (1Password.app integration)
-//  2. OP_SERVICE_ACCOUNT_TOKEN is already set in the environment
-//  3. Ask the user to provide a service account token
+// configureOnePassword stores 1Password auth in the Keychain.
+// When the 1Password.app integration is available, the user is still offered
+// the option to use a service account token — required for launchd/background use
+// where the app may not be unlocked.
 //
 // Returns the token string (empty when 1Password.app integration is used).
 func configureOnePassword(account string) (string, error) {
 	fmt.Println("\n--- 1Password auth ---")
 
-	// Path 1: try op without any token injection.
-	if opWorksWithoutToken(account) {
-		fmt.Println("✓ 1Password authenticated via 1Password.app (no token needed)")
-		_ = keychain.Store(keychain.AccountOPToken, "")
-		return "", nil
+	appWorks := opWorksWithoutToken(account)
+
+	if appWorks {
+		fmt.Println("✓ 1Password.app integration is available.")
+		fmt.Println()
+		fmt.Println("Note: for scheduled/background use (launchd) a Service Account token is")
+		fmt.Println("recommended — the app integration requires 1Password to be unlocked,")
+		fmt.Println("which is not guaranteed when your Mac is locked.")
+		fmt.Println()
+		if !promptYesNo("Use a Service Account token instead?") {
+			fmt.Println("✓ Using 1Password.app integration")
+			_ = keychain.Store(keychain.AccountOPToken, "")
+			return "", nil
+		}
 	}
 
-	// Path 2: service account token already in the environment.
+	// Service account token already in the environment.
 	if t := os.Getenv("OP_SERVICE_ACCOUNT_TOKEN"); t != "" {
 		fmt.Println("✓ Using OP_SERVICE_ACCOUNT_TOKEN from environment")
 		if err := keychain.Store(keychain.AccountOPToken, t); err != nil {
@@ -210,14 +218,23 @@ func configureOnePassword(account string) (string, error) {
 		return t, nil
 	}
 
-	// Path 3: ask the user.
-	fmt.Println("op is not authenticated for this account. Options:")
-	fmt.Println("  a) Open 1Password.app → Settings → Developer → enable CLI integration, then re-run setup")
-	fmt.Println("  b) Provide a Service Account token: https://developer.1password.com/docs/service-accounts/")
-	fmt.Println()
+	if !appWorks {
+		fmt.Println("op is not authenticated for this account. Options:")
+		fmt.Println("  a) Open 1Password.app → Settings → Developer → enable CLI integration, then re-run setup")
+		fmt.Println("  b) Provide a Service Account token: https://developer.1password.com/docs/service-accounts/")
+		fmt.Println()
+	} else {
+		fmt.Println("Create a Service Account token at: https://developer.1password.com/docs/service-accounts/")
+		fmt.Println()
+	}
 
 	token := promptSecret("Service account token (or press Enter to abort)")
 	if strings.TrimSpace(token) == "" {
+		if appWorks {
+			fmt.Println("✓ Using 1Password.app integration")
+			_ = keychain.Store(keychain.AccountOPToken, "")
+			return "", nil
+		}
 		return "", fmt.Errorf("no 1Password authentication available — see options above")
 	}
 
