@@ -96,6 +96,19 @@ func (c *Client) ListVaults() ([]VaultInfo, error) {
 	return vaults, nil
 }
 
+// GetItem fetches the full details of a single item by its 1Password ID.
+func (c *Client) GetItem(opID string) (*Item, error) {
+	out, err := c.run("op", "item", "get", opID, "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("op item get %q: %w", opID, err)
+	}
+	var item Item
+	if err := json.Unmarshal(out, &item); err != nil {
+		return nil, fmt.Errorf("parsing item %q: %w", opID, err)
+	}
+	return &item, nil
+}
+
 // CreateVault creates a new 1Password vault with the given name and returns it.
 func (c *Client) CreateVault(name string) (*VaultInfo, error) {
 	out, err := c.run("op", "vault", "create", name, "--format", "json")

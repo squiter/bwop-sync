@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-28
+
+### Added
+- `bwop-sync recover` command: scans 1Password vaults for the hidden `bwop_sync_bw_id` field and rebuilds `state.json` without the original file
+- `bwop-sync backfill` command: one-time migration that stamps the hidden field onto 1Password items created before v0.3.0 using the existing `state.json`
+- Hidden concealed field (`bwop_sync_bw_id`) stamped on every newly created 1Password item to record the source Bitwarden ID — does not appear in the 1Password sidebar
+
+### Removed
+- `bwop-sync` tag on 1Password items (replaced by the hidden field; cleaner UI)
+
 ## [0.2.0] - 2026-04-28
 
 ### Added

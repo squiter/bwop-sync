@@ -94,6 +94,8 @@ func transformLogin(item bitwarden.Item, vaultID string) *onepassword.Item {
 
 	fields = append(fields, convertCustomFields(item.Fields)...)
 
+	fields = append(fields, BwIDField(item.ID))
+
 	return &onepassword.Item{
 		Title:    item.Name,
 		Category: onepassword.CategoryLogin,
@@ -114,6 +116,8 @@ func transformSecureNote(item bitwarden.Item, vaultID string) *onepassword.Item 
 		},
 	}
 	fields = append(fields, convertCustomFields(item.Fields)...)
+
+	fields = append(fields, BwIDField(item.ID))
 
 	return &onepassword.Item{
 		Title:    item.Name,
@@ -146,6 +150,8 @@ func transformCard(item bitwarden.Item, vaultID string) *onepassword.Item {
 	}
 
 	fields = append(fields, convertCustomFields(item.Fields)...)
+
+	fields = append(fields, BwIDField(item.ID))
 
 	return &onepassword.Item{
 		Title:    item.Name,
@@ -185,6 +191,8 @@ func transformIdentity(item bitwarden.Item, vaultID string) *onepassword.Item {
 	}
 
 	fields = append(fields, convertCustomFields(item.Fields)...)
+
+	fields = append(fields, BwIDField(item.ID))
 
 	return &onepassword.Item{
 		Title:    item.Name,
@@ -236,6 +244,22 @@ func cardExpiry(month, year string) string {
 	}
 	// 1Password monthYear fields require YYYY/MM format.
 	return fmt.Sprintf("%s/%02s", year, month)
+}
+
+// BWIDFieldID is the ID of the hidden field stamped on every 1Password item
+// created by bwop-sync. The field stores the Bitwarden item ID and is used by
+// `bwop-sync recover` to rebuild state.json without needing the original state file.
+// It is a concealed (hidden) field so it does not clutter the 1Password UI.
+const BWIDFieldID = "bwop_sync_bw_id"
+
+// BwIDField returns the hidden field that encodes the Bitwarden item ID.
+func BwIDField(bwID string) onepassword.Field {
+	return onepassword.Field{
+		ID:    BWIDFieldID,
+		Label: "bwop-sync source ID",
+		Type:  onepassword.FieldTypeConcealed,
+		Value: bwID,
+	}
 }
 
 // computeHash returns a SHA-256 fingerprint of the item's content fields so the

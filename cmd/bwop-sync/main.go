@@ -15,6 +15,7 @@ import (
 	"github.com/squiter/bwop-sync/internal/onepassword"
 	"github.com/squiter/bwop-sync/internal/state"
 	"github.com/squiter/bwop-sync/internal/sync"
+	"github.com/squiter/bwop-sync/internal/transformer"
 )
 
 // version is set at build time via -ldflags "-X main.version=vX.Y.Z".
@@ -45,7 +46,7 @@ func main() {
 		Long:  "bwop-sync keeps your Bitwarden vault in sync with 1Password.\nRun `bwop-setup` first to configure vault mappings and credentials.",
 	}
 
-	root.AddCommand(syncCmd(), versionCmd())
+	root.AddCommand(syncCmd(), recoverCmd(), backfillCmd(), versionCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -72,6 +73,196 @@ Before each real sync, backups of both vaults are saved to
 		"Print what would be synced without making any changes to 1Password")
 
 	return cmd
+}
+
+func recoverCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "recover",
+		Short: "Rebuild state.json by scanning 1Password vaults for bwop-sync tags",
+		Long: `recover scans every mapped 1Password vault for items tagged with
+"bwop-sync:<bw-id>" and reconstructs state.json from those tags.
+
+Use this if state.json was accidentally deleted or corrupted. Items created
+before tagging was introduced (bwop-sync v0.3.0) won't have the tag and
+will be treated as new on the next sync, which may produce duplicates for
+those items only.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRecover()
+		},
+	}
+}
+
+func runRecover() error {
+	cfgDir := configDir()
+
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return fmt.Errorf("load config: %w\nRun `bwop-setup` first.", err)
+	}
+
+	opToken, _ := keychain.Read(keychain.AccountOPToken)
+	opAccount, _ := keychain.Read(keychain.AccountOPAccount)
+
+	var opClient *onepassword.Client
+	if opToken == "" {
+		opClient = onepassword.NewFromEnv(opAccount)
+	} else {
+		opClient = onepassword.New(opToken)
+	}
+
+	bwSession, err := keychain.Read(keychain.AccountBWSession)
+	if err != nil {
+		return fmt.Errorf("BW session not found — run `scripts/bwop-unlock.sh` first")
+	}
+	bwClient := bitwarden.New(bwSession)
+
+	fmt.Println(bold("Recovering state.json from 1Password tags…"))
+
+	// Build BW item hash map keyed by BW ID.
+	fmt.Print("  Fetching Bitwarden items… ")
+	bwItems, err := bwClient.ListItems()
+	if err != nil {
+		return fmt.Errorf("listing BW items: %w", err)
+	}
+	fmt.Printf("%s\n", green(fmt.Sprintf("%d items", len(bwItems))))
+
+	bwByID := make(map[string]bitwarden.Item, len(bwItems))
+	for _, item := range bwItems {
+		bwByID[item.ID] = item
+	}
+
+	statePath := filepath.Join(cfgDir, "state.json")
+	st, err := state.Load(statePath)
+	if err != nil {
+		return fmt.Errorf("loading state: %w", err)
+	}
+
+	recovered, skipped := 0, 0
+	vaultIDs := uniqueVaultIDs(cfg)
+
+	for _, vaultID := range vaultIDs {
+		fmt.Printf("  Scanning vault %s… ", gray(vaultID))
+		items, err := opClient.ListItems(vaultID)
+		if err != nil {
+			fmt.Printf("%s\n", yellow("failed, skipping"))
+			continue
+		}
+		fmt.Printf("%s items\n", green(fmt.Sprintf("%d", len(items))))
+
+		for _, listed := range items {
+			full, err := opClient.GetItem(listed.ID)
+			if err != nil || full == nil {
+				skipped++
+				continue
+			}
+			bwID := ""
+			for _, field := range full.Fields {
+				if field.ID == transformer.BWIDFieldID {
+					bwID = field.Value
+					break
+				}
+			}
+			if bwID == "" {
+				skipped++
+				continue
+			}
+			bwItem, ok := bwByID[bwID]
+			if !ok {
+				skipped++
+				continue
+			}
+			result := transformer.Transform(bwItem, vaultID)
+			st.Set(bwID, listed.ID, result.Hash)
+			recovered++
+		}
+	}
+
+	if err := st.Save(statePath); err != nil {
+		return fmt.Errorf("saving state: %w", err)
+	}
+
+	fmt.Printf("\n%s Recovered %d item(s), %s item(s) had no tag (will re-sync on next run)\n",
+		green("✓"), recovered, yellow(fmt.Sprintf("%d", skipped)))
+	fmt.Printf("%s %s\n", gray("state →"), gray(statePath))
+	return nil
+}
+
+func backfillCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "backfill",
+		Short: "Stamp the bwop-sync hidden field onto existing 1Password items (one-time migration)",
+		Long: `backfill reads state.json and adds the hidden bwop_sync_bw_id field to every
+1Password item that was created before v0.3.0. This is a one-time migration
+step; once done, bwop-sync recover can rebuild state.json from the items alone.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runBackfill()
+		},
+	}
+}
+
+func runBackfill() error {
+	cfgDir := configDir()
+
+	opToken, _ := keychain.Read(keychain.AccountOPToken)
+	opAccount, _ := keychain.Read(keychain.AccountOPAccount)
+
+	var opClient *onepassword.Client
+	if opToken == "" {
+		opClient = onepassword.NewFromEnv(opAccount)
+	} else {
+		opClient = onepassword.New(opToken)
+	}
+
+	statePath := filepath.Join(cfgDir, "state.json")
+	st, err := state.Load(statePath)
+	if err != nil {
+		return fmt.Errorf("loading state: %w", err)
+	}
+
+	if len(st.Entries) == 0 {
+		fmt.Println("state.json is empty — nothing to backfill")
+		return nil
+	}
+
+	fmt.Printf("%s Stamping hidden field on %d item(s)…\n", bold("Backfill"), len(st.Entries))
+
+	done, skipped, failed := 0, 0, 0
+	for bwID, entry := range st.Entries {
+		full, err := opClient.GetItem(entry.OPID)
+		if err != nil {
+			fmt.Printf("  %s %s — could not fetch: %v\n", red("✗"), entry.OPID, err)
+			failed++
+			continue
+		}
+
+		// Already stamped — skip.
+		alreadySet := false
+		for _, f := range full.Fields {
+			if f.ID == transformer.BWIDFieldID {
+				alreadySet = true
+				break
+			}
+		}
+		if alreadySet {
+			skipped++
+			continue
+		}
+
+		full.Fields = append(full.Fields, transformer.BwIDField(bwID))
+
+		if _, err := opClient.EditItem(entry.OPID, *full); err != nil {
+			fmt.Printf("  %s %s — edit failed: %v\n", red("✗"), full.Title, err)
+			failed++
+			continue
+		}
+
+		fmt.Printf("  %s %s\n", green("✓"), full.Title)
+		done++
+	}
+
+	fmt.Printf("\n%s %d stamped, %d already set, %d failed\n",
+		bold("Done"), done, skipped, failed)
+	return nil
 }
 
 func versionCmd() *cobra.Command {
