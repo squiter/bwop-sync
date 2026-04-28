@@ -35,20 +35,57 @@ This installs `bw` (Bitwarden CLI) and `op` (1Password CLI).
 
 ---
 
+## Installation
+
+### Download a release (recommended)
+
+1. Go to the [Releases page](https://github.com/squiter/bwop-sync/releases) and download the binaries for your Mac:
+   - **Apple Silicon (M1/M2/M3):** `bwop-sync_darwin_arm64` and `bwop-setup_darwin_arm64`
+   - **Intel:** `bwop-sync_darwin_amd64` and `bwop-setup_darwin_amd64`
+
+2. Make them executable and move to your PATH:
+
+```bash
+# replace arm64 with amd64 if you're on Intel
+chmod +x bwop-sync_darwin_arm64 bwop-setup_darwin_arm64
+sudo mv bwop-sync_darwin_arm64  /usr/local/bin/bwop-sync
+sudo mv bwop-setup_darwin_arm64 /usr/local/bin/bwop-setup
+```
+
+3. Verify:
+
+```bash
+bwop-sync version
+```
+
+> macOS may block the binaries on first run with a "cannot be opened because the developer cannot be verified" message.
+> Right-click the binary in Finder → Open, or run:
+> ```bash
+> xattr -d com.apple.quarantine /usr/local/bin/bwop-sync /usr/local/bin/bwop-setup
+> ```
+
+### Build from source
+
+See the [Building from source](#building-from-source) section below.
+
+---
+
 ## Setup (first time only)
 
 Run the setup wizard. It will:
 1. Log you in to Bitwarden and store the session token in Keychain
-2. Store your 1Password service account token in Keychain
+2. Store your 1Password authentication in Keychain
 3. Let you map each Bitwarden collection to a 1Password vault
 4. Optionally install the launchd agent for scheduled syncing
 
 ```bash
-go run ./cmd/bwop-setup
+bwop-setup
 ```
 
-> You need a 1Password **Service Account** token. Create one at
-> https://developer.1password.com/docs/service-accounts/
+> **1Password authentication:** for interactive use, the 1Password desktop app integration works fine.
+> For background/scheduled use (launchd), you need a **Service Account** token — the app must be
+> unlocked for the CLI integration to work, which isn't guaranteed in a scheduled context.
+> Create a service account at https://developer.1password.com/docs/service-accounts/
 
 ---
 
@@ -114,6 +151,7 @@ All runtime files live in `~/.config/bwop-sync/`:
 | `state.json` | BW item ID → 1P item ID mapping (used for updates) |
 | `passkey-log.json` | Passkeys that were skipped — manual action required |
 | `logs/` | Dry-run and sync logs |
+| `backups/` | Pre-sync snapshots of both vaults (BW full export + 1P item list) |
 
 ---
 
@@ -133,7 +171,7 @@ passkey in 1Password on the affected site.
 
 ---
 
-## Building
+## Building from source
 
 > **New to Go?** Go compiles your code to a standalone binary — there's no
 > interpreter needed at runtime. Here are the commands you'll use:
