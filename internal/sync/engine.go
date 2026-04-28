@@ -17,20 +17,21 @@ import (
 	"github.com/squiter/bwop-sync/internal/transformer"
 )
 
-// opDelay is the minimum pause between consecutive 1Password API calls.
-// 1Password service accounts allow ~100 writes/minute; 700ms keeps us safely under that.
-const opDelay = 700 * time.Millisecond
+// opDelay is the minimum pause between consecutive 1Password write calls.
+// 1Password service accounts are documented at 100 writes/minute but in practice
+// sustained throughput closer to 40/min is more reliable; 1.5s keeps us there.
+const opDelay = 1500 * time.Millisecond
 
 // maxRetries is how many times to retry after a rate-limit response before giving up.
 const maxRetries = 4
 
 // rateLimitBackoff is the wait time before each successive retry on rate-limit errors.
-// Starts at 15s and doubles: 15s, 30s, 60s, 120s.
+// Starts at 60s because shorter waits never clear a depleted quota.
 var rateLimitBackoff = [maxRetries]time.Duration{
-	15 * time.Second,
-	30 * time.Second,
 	60 * time.Second,
 	120 * time.Second,
+	180 * time.Second,
+	300 * time.Second,
 }
 
 // ErrRateLimitExhausted is returned by Run when every retry for a single item

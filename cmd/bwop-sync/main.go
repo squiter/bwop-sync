@@ -296,10 +296,10 @@ func runBackfill() error {
 // backfillEdit applies the same 700 ms pacing + rate-limit retry as the sync
 // engine so that backfill doesn't hit the 1Password service-account cap.
 func backfillEdit(opClient *onepassword.Client, opID string, item onepassword.Item) error {
-	backoff := []time.Duration{15 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second}
+	backoff := []time.Duration{60 * time.Second, 120 * time.Second, 180 * time.Second, 300 * time.Second}
 	var err error
 	for attempt := 0; attempt <= len(backoff); attempt++ {
-		time.Sleep(700 * time.Millisecond)
+		time.Sleep(1500 * time.Millisecond)
 		_, err = opClient.EditItem(opID, item)
 		if err == nil {
 			return nil
