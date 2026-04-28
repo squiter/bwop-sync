@@ -110,6 +110,19 @@ func (c *Client) GetItem(opID, vaultID string) (*Item, error) {
 	return &item, nil
 }
 
+// GrantVaultAccess grants a user access to a vault.
+// userEmail can be an email address, display name, or user UUID.
+func (c *Client) GrantVaultAccess(vaultID, userEmail string) error {
+	_, err := c.run("op", "vault", "user", "grant",
+		"--vault", vaultID,
+		"--user", userEmail,
+	)
+	if err != nil {
+		return fmt.Errorf("op vault user grant: %w", err)
+	}
+	return nil
+}
+
 // CreateVault creates a new 1Password vault with the given name and returns it.
 func (c *Client) CreateVault(name string) (*VaultInfo, error) {
 	out, err := c.run("op", "vault", "create", name, "--format", "json")

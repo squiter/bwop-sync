@@ -47,7 +47,7 @@ func main() {
 		Long:  "bwop-sync keeps your Bitwarden vault in sync with 1Password.\nRun `bwop-setup` first to configure vault mappings and credentials.",
 	}
 
-	root.AddCommand(syncCmd(), recoverCmd(), backfillCmd(), versionCmd())
+	root.AddCommand(syncCmd(), recoverCmd(), backfillCmd(), grantAccessCmd(), versionCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -315,6 +315,84 @@ func backfillEdit(opClient *onepassword.Client, opID string, item onepassword.It
 		time.Sleep(wait)
 	}
 	return err
+}
+
+func grantAccessCmd() *cobra.Command {
+	var email string
+
+	cmd := &cobra.Command{
+		Use:   "grant-access",
+		Short: "Grant your 1Password account access to all configured vaults",
+		Long: `grant-access runs 'op vault user grant' for every vault in the mapping,
+giving the specified user read/write access so items appear in the 1Password app.
+
+This is needed when vaults were created by a service account (e.g. via bwop-setup)
+because service-account-created vaults are not automatically visible to personal accounts.`,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGrantAccess(email)
+		},
+	}
+
+	cmd.Flags().StringVar(&email, "email", "", "1Password account email (auto-detected if omitted)")
+	return cmd
+}
+
+func runGrantAccess(email string) error {
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return fmt.Errorf("load config: %w\nRun `bwop-setup` first.", err)
+	}
+
+	opToken, _ := keychain.Read(keychain.AccountOPToken)
+	opAccount, _ := keychain.Read(keychain.AccountOPAccount)
+
+	var opClient *onepassword.Client
+	if opToken == "" {
+		opClient = onepassword.NewFromEnv(opAccount)
+	} else {
+		opClient = onepassword.New(opToken)
+	}
+
+	// Auto-detect email from registered op accounts if not provided.
+	if email == "" {
+		accounts, err := onepassword.ListAccounts()
+		if err == nil && len(accounts) == 1 {
+			email = accounts[0].Email
+			fmt.Printf("  Detected account: %s\n", cyan(email))
+		} else if err == nil && len(accounts) > 1 {
+			fmt.Println("Multiple 1Password accounts found:")
+			for i, a := range accounts {
+				fmt.Printf("  %d) %s (%s)\n", i+1, a.Email, a.URL)
+			}
+			fmt.Print("Enter your email: ")
+			fmt.Scanln(&email)
+		}
+	}
+
+	if email == "" {
+		return fmt.Errorf("could not detect account email — pass --email <your@email.com>")
+	}
+
+	vaultIDs := uniqueVaultIDs(cfg)
+	fmt.Printf("%s Granting %s access to %d vault(s)…\n", bold("grant-access"), cyan(email), len(vaultIDs))
+
+	ok, failed := 0, 0
+	for _, vaultID := range vaultIDs {
+		if err := opClient.GrantVaultAccess(vaultID, email); err != nil {
+			fmt.Printf("  %s vault %s — %v\n", red("✗"), gray(vaultID), err)
+			failed++
+			continue
+		}
+		fmt.Printf("  %s vault %s\n", green("✓"), gray(vaultID))
+		ok++
+	}
+
+	fmt.Printf("\n%s %d granted, %d failed\n", bold("Done"), ok, failed)
+	if failed > 0 {
+		return fmt.Errorf("%d vault(s) could not be updated — check that the service account has Manage Vault permission", failed)
+	}
+	return nil
 }
 
 func versionCmd() *cobra.Command {
