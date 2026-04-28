@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `bwop-sync backfill` command: one-time migration that stamps the hidden field onto 1Password items created before v0.3.0 using the existing `state.json`
 - Hidden concealed field (`bwop_sync_bw_id`) stamped on every newly created 1Password item to record the source Bitwarden ID — does not appear in the 1Password sidebar
 
+### Fixed
+- `backfill` and `recover` now pass `--vault` to `op item get`, which is required for service account authentication
+- `backfill` applies 700 ms pacing and exponential back-off (15 s → 120 s) between edits to stay within the 1Password service account rate limit
+
 ### Removed
 - `bwop-sync` tag on 1Password items (replaced by the hidden field; cleaner UI)
 
