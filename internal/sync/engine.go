@@ -87,13 +87,19 @@ func (r *Report) Summary() string {
 		kind, creates, updates, skips, len(r.Passkeys), len(r.Errors))
 }
 
+// ProgressFunc is called after each item is processed during a real sync.
+// action is what happened, name is the BW item name, err is non-nil on failure.
+// Set Engine.Progress before calling Run to receive live updates.
+type ProgressFunc func(action Action, name string, err error)
+
 // Engine drives the sync between BW and 1P.
 type Engine struct {
-	bw     BWClient
-	op     OPClient
-	cfg    *config.Config
-	state  *state.State
-	logDir string
+	bw       BWClient
+	op       OPClient
+	cfg      *config.Config
+	state    *state.State
+	logDir   string
+	Progress ProgressFunc
 }
 
 // New creates an Engine ready to run.
@@ -144,6 +150,7 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 					BWID:     item.ID,
 				})
 			}
+			e.progress(ActionSkip, item.Name, nil)
 			continue
 		}
 
@@ -162,12 +169,14 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 				created, err := e.op.CreateItem(*result.OPItem)
 				if err != nil {
 					report.Errors = append(report.Errors, fmt.Sprintf("create %q: %v", item.Name, err))
+					e.progress(ActionCreate, item.Name, err)
 					continue
 				}
 				e.state.Set(item.ID, created.ID, result.Hash)
 				plan.OPItemID = created.ID
 			}
 			report.Plans = append(report.Plans, plan)
+			e.progress(ActionCreate, item.Name, nil)
 			continue
 		}
 
@@ -187,11 +196,13 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 			_, err := e.op.EditItem(existing.OPID, *result.OPItem)
 			if err != nil {
 				report.Errors = append(report.Errors, fmt.Sprintf("update %q: %v", item.Name, err))
+				e.progress(ActionUpdate, item.Name, err)
 				continue
 			}
 			e.state.Set(item.ID, existing.OPID, result.Hash)
 		}
 		report.Plans = append(report.Plans, plan)
+		e.progress(ActionUpdate, item.Name, nil)
 	}
 
 	return report, nil
@@ -287,6 +298,12 @@ func WritePasskeyLog(entries []PasskeyEntry, path string) error {
 		return fmt.Errorf("marshaling passkey log: %w", err)
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+func (e *Engine) progress(action Action, name string, err error) {
+	if e.Progress != nil {
+		e.Progress(action, name, err)
+	}
 }
 
 func loginUsername(item bitwarden.Item) string {

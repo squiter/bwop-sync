@@ -142,7 +142,22 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 		fmt.Printf("Pre-sync dry-run logged → %s\n", preDryPath)
 	}
 
+	engine.Progress = func(action sync.Action, name string, err error) {
+		switch {
+		case err != nil:
+			fmt.Print("!")
+		case action == sync.ActionCreate:
+			fmt.Print("+")
+		case action == sync.ActionUpdate:
+			fmt.Print("~")
+		default:
+			fmt.Print(".")
+		}
+	}
+
+	fmt.Print("Syncing ")
 	report, err := engine.Run(false)
+	fmt.Println()
 	if err != nil {
 		return err
 	}
