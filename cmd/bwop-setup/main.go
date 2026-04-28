@@ -53,8 +53,19 @@ func run() error {
 		return err
 	}
 
-	if err := buildVaultMapping(bwSession, opToken, opAccount); err != nil {
-		return err
+	buildMapping := true
+	cfgPath := config.DefaultPath()
+	if _, err := os.Stat(cfgPath); err == nil {
+		fmt.Printf("\nA vault mapping already exists at %s\n", cfgPath)
+		if !promptYesNo("Overwrite it with a new mapping?") {
+			fmt.Println("Keeping existing mapping.")
+			buildMapping = false
+		}
+	}
+	if buildMapping {
+		if err := buildVaultMapping(bwSession, opToken, opAccount); err != nil {
+			return err
+		}
 	}
 
 	if promptYesNo("Install the launchd agent to sync every 6 hours?") {
@@ -102,10 +113,20 @@ func checkDeps() error {
 	return nil
 }
 
-// unlockBitwarden prompts for the BW master password, unlocks the vault, and
-// stores the session token in the macOS Keychain. The password is NEVER stored.
+// unlockBitwarden returns a valid BW session token. If a session already exists
+// in the Keychain and is still active, it is reused without prompting.
 func unlockBitwarden() (string, error) {
 	fmt.Println("\n--- Bitwarden ---")
+
+	// Reuse an existing session if it is still valid.
+	if existing, err := keychain.Read(keychain.AccountBWSession); err == nil && existing != "" {
+		c := bitwarden.New(existing)
+		if c.IsSessionValid() {
+			fmt.Println("✓ Existing Bitwarden session is still valid — skipping unlock")
+			return existing, nil
+		}
+		fmt.Println("Existing session has expired, unlocking again...")
+	}
 
 	// Check if already logged in.
 	out, _ := exec.Command("bw", "status").Output()
