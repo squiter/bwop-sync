@@ -97,8 +97,9 @@ func (c *Client) ListVaults() ([]VaultInfo, error) {
 }
 
 // GetItem fetches the full details of a single item by its 1Password ID.
-func (c *Client) GetItem(opID string) (*Item, error) {
-	out, err := c.run("op", "item", "get", opID, "--format", "json")
+// vaultID is required when authenticating via service account.
+func (c *Client) GetItem(opID, vaultID string) (*Item, error) {
+	out, err := c.run("op", "item", "get", opID, "--vault", vaultID, "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("op item get %q: %w", opID, err)
 	}

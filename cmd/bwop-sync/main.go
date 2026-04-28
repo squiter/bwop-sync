@@ -150,7 +150,7 @@ func runRecover() error {
 		fmt.Printf("%s items\n", green(fmt.Sprintf("%d", len(items))))
 
 		for _, listed := range items {
-			full, err := opClient.GetItem(listed.ID)
+			full, err := opClient.GetItem(listed.ID, vaultID)
 			if err != nil || full == nil {
 				skipped++
 				continue
@@ -203,6 +203,11 @@ step; once done, bwop-sync recover can rebuild state.json from the items alone.`
 func runBackfill() error {
 	cfgDir := configDir()
 
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return fmt.Errorf("load config: %w\nRun `bwop-setup` first.", err)
+	}
+
 	opToken, _ := keychain.Read(keychain.AccountOPToken)
 	opAccount, _ := keychain.Read(keychain.AccountOPAccount)
 
@@ -224,11 +229,33 @@ func runBackfill() error {
 		return nil
 	}
 
+	// Build OP item ID → vault ID map by listing items in each known vault.
+	fmt.Print("  Building vault index… ")
+	opIDToVault := make(map[string]string)
+	for _, vaultID := range uniqueVaultIDs(cfg) {
+		items, err := opClient.ListItems(vaultID)
+		if err != nil {
+			fmt.Printf("%s\n", yellow("warning: could not list vault "+vaultID))
+			continue
+		}
+		for _, item := range items {
+			opIDToVault[item.ID] = vaultID
+		}
+	}
+	fmt.Printf("%s\n", green(fmt.Sprintf("%d items indexed", len(opIDToVault))))
+
 	fmt.Printf("%s Stamping hidden field on %d item(s)…\n", bold("Backfill"), len(st.Entries))
 
 	done, skipped, failed := 0, 0, 0
 	for bwID, entry := range st.Entries {
-		full, err := opClient.GetItem(entry.OPID)
+		vaultID, ok := opIDToVault[entry.OPID]
+		if !ok {
+			fmt.Printf("  %s %s — not found in any vault\n", yellow("?"), entry.OPID)
+			skipped++
+			continue
+		}
+
+		full, err := opClient.GetItem(entry.OPID, vaultID)
 		if err != nil {
 			fmt.Printf("  %s %s — could not fetch: %v\n", red("✗"), entry.OPID, err)
 			failed++
