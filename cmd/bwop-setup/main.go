@@ -228,21 +228,43 @@ func configureOnePassword(account string) (string, error) {
 		fmt.Println()
 	}
 
-	token := promptSecret("Service account token (or press Enter to abort)")
-	if strings.TrimSpace(token) == "" {
-		if appWorks {
-			fmt.Println("✓ Using 1Password.app integration")
-			_ = keychain.Store(keychain.AccountOPToken, "")
-			return "", nil
+	for {
+		token := promptSecret("Service account token (or press Enter to abort)")
+		if strings.TrimSpace(token) == "" {
+			if appWorks {
+				fmt.Println("✓ Using 1Password.app integration")
+				_ = keychain.Store(keychain.AccountOPToken, "")
+				return "", nil
+			}
+			return "", fmt.Errorf("no 1Password authentication available — see options above")
 		}
-		return "", fmt.Errorf("no 1Password authentication available — see options above")
-	}
 
-	if err := keychain.Store(keychain.AccountOPToken, token); err != nil {
-		return "", fmt.Errorf("storing OP token: %w", err)
+		// Verify the token works and has vault access before storing it.
+		vaults, err := onepassword.New(token).ListVaults()
+		if err != nil {
+			fmt.Printf("✗ Token rejected by op: %v\n", err)
+			fmt.Println("  Check that you copied the full token and try again.")
+			fmt.Println()
+			continue
+		}
+		if len(vaults) == 0 {
+			fmt.Println("✗ Token is valid but the service account has no vault access.")
+			fmt.Println()
+			fmt.Println("  Grant vault access first:")
+			fmt.Println("  → https://my.1password.com → Integrations → Service Accounts")
+			fmt.Println("  → Select your service account → Vaults → add the vaults to sync")
+			fmt.Println()
+			fmt.Println("  Then come back and paste the token again.")
+			fmt.Println()
+			continue
+		}
+
+		if err := keychain.Store(keychain.AccountOPToken, token); err != nil {
+			return "", fmt.Errorf("storing OP token: %w", err)
+		}
+		fmt.Printf("✓ Service account token stored in Keychain (%d vault(s) accessible)\n", len(vaults))
+		return token, nil
 	}
-	fmt.Println("✓ 1Password service account token stored in Keychain")
-	return token, nil
 }
 
 // opWorksWithoutToken returns true when `op vault list` succeeds for the given
