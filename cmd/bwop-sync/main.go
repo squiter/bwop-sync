@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -416,14 +417,21 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 	}
 
 	fmt.Print(bold("Syncing "))
-	report, err := engine.Run(false)
+	report, runErr := engine.Run(false)
 	fmt.Println()
-	if err != nil {
-		return err
-	}
 
+	// Save state for whatever completed before any abort.
 	if err := st.Save(statePath); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not save state: %v\n", err)
+	}
+
+	if errors.Is(runErr, sync.ErrRateLimitExhausted) {
+		sync.WriteLog(report, logDir, "sync") //nolint — best-effort
+		fmt.Println(bold(report.Summary()))
+		return fmt.Errorf("%s %s", yellow("⏳"), runErr.Error())
+	}
+	if runErr != nil {
+		return runErr
 	}
 
 	syncLogPath, err := sync.WriteLog(report, logDir, "sync")

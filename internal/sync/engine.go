@@ -3,6 +3,7 @@ package sync
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,6 +32,11 @@ var rateLimitBackoff = [maxRetries]time.Duration{
 	60 * time.Second,
 	120 * time.Second,
 }
+
+// ErrRateLimitExhausted is returned by Run when every retry for a single item
+// fails with a rate-limit response. The run is aborted so the caller can tell
+// the user to wait before retrying; state is saved for completed items.
+var ErrRateLimitExhausted = errors.New("1Password rate limit exhausted — wait 10–15 minutes and run sync again")
 
 // BWClient is the interface the engine needs from the Bitwarden client.
 // *bitwarden.Client satisfies this interface.
@@ -186,6 +192,9 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 				if err != nil {
 					report.Errors = append(report.Errors, fmt.Sprintf("create %q: %v", item.Name, err))
 					e.progress(ActionCreate, item.Name, err)
+					if errors.Is(err, ErrRateLimitExhausted) {
+						return report, ErrRateLimitExhausted
+					}
 					continue
 				}
 				e.state.Set(item.ID, created.ID, result.Hash)
@@ -213,6 +222,9 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 			if err != nil {
 				report.Errors = append(report.Errors, fmt.Sprintf("update %q: %v", item.Name, err))
 				e.progress(ActionUpdate, item.Name, err)
+				if errors.Is(err, ErrRateLimitExhausted) {
+					return report, ErrRateLimitExhausted
+				}
 				continue
 			}
 			e.state.Set(item.ID, existing.OPID, result.Hash)
@@ -340,8 +352,11 @@ func (e *Engine) opWithRetry(fn func() (*onepassword.Item, error)) (*onepassword
 		if err == nil {
 			return result, nil
 		}
-		if !isRateLimit(err) || attempt == maxRetries {
+		if !isRateLimit(err) {
 			break
+		}
+		if attempt == maxRetries {
+			return nil, ErrRateLimitExhausted
 		}
 		wait := rateLimitBackoff[attempt]
 		if e.Progress != nil {
