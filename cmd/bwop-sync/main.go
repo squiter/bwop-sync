@@ -299,7 +299,7 @@ func runBackfill() error {
 // backfillEdit applies the same 700 ms pacing + rate-limit retry as the sync
 // engine so that backfill doesn't hit the 1Password service-account cap.
 func backfillEdit(opClient *onepassword.Client, opID string, item onepassword.Item) error {
-	backoff := []time.Duration{60 * time.Second, 120 * time.Second, 180 * time.Second, 300 * time.Second}
+	backoff := []time.Duration{30 * time.Second, 60 * time.Second}
 	var err error
 	for attempt := 0; attempt <= len(backoff); attempt++ {
 		time.Sleep(1500 * time.Millisecond)
@@ -431,7 +431,11 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 	if errors.Is(runErr, sync.ErrRateLimitExhausted) {
 		sync.WriteLog(report, logDir, "sync") //nolint — best-effort
 		fmt.Println(bold(report.Summary()))
-		return fmt.Errorf("%s %s", yellow("⏳"), runErr.Error())
+		msg := runErr.Error()
+		if report.RemainingItems > 0 {
+			msg += fmt.Sprintf(" (%d item(s) still pending)", report.RemainingItems)
+		}
+		return fmt.Errorf("%s %s", yellow("⏳"), msg)
 	}
 	if runErr != nil {
 		return runErr

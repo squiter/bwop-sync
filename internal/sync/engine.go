@@ -23,15 +23,14 @@ import (
 const opDelay = 1500 * time.Millisecond
 
 // maxRetries is how many times to retry after a rate-limit response before giving up.
-const maxRetries = 4
+// Two retries (30s + 60s) handles transient burst limits without wasting time when
+// the hourly write quota (~100 writes/hour) is fully depleted.
+const maxRetries = 2
 
 // rateLimitBackoff is the wait time before each successive retry on rate-limit errors.
-// Starts at 60s because shorter waits never clear a depleted quota.
 var rateLimitBackoff = [maxRetries]time.Duration{
+	30 * time.Second,
 	60 * time.Second,
-	120 * time.Second,
-	180 * time.Second,
-	300 * time.Second,
 }
 
 // ErrRateLimitExhausted is returned by Run when every retry for a single item
@@ -74,11 +73,14 @@ type ItemPlan struct {
 
 // Report summarises a sync run.
 type Report struct {
-	RunAt    time.Time
-	DryRun   bool
-	Plans    []ItemPlan
-	Errors   []string
-	Passkeys []PasskeyEntry
+	RunAt       time.Time
+	DryRun      bool
+	Plans       []ItemPlan
+	Errors      []string
+	Passkeys    []PasskeyEntry
+	// RemainingItems is set when the run aborts early (e.g. rate limit exhausted).
+	// It counts BW items that were not yet processed.
+	RemainingItems int
 }
 
 // PasskeyEntry is a skipped item that holds a passkey. Written to the passkey log.
@@ -140,7 +142,7 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 		return nil, fmt.Errorf("listing BW items: %w", err)
 	}
 
-	for _, item := range items {
+	for i, item := range items {
 		if item.DeletedDate != nil {
 			continue // deleted items are deferred to v2 — see README
 		}
@@ -194,6 +196,7 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 					report.Errors = append(report.Errors, fmt.Sprintf("create %q: %v", item.Name, err))
 					e.progress(ActionCreate, item.Name, err)
 					if errors.Is(err, ErrRateLimitExhausted) {
+						report.RemainingItems = len(items) - i
 						return report, ErrRateLimitExhausted
 					}
 					continue
@@ -224,6 +227,7 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 				report.Errors = append(report.Errors, fmt.Sprintf("update %q: %v", item.Name, err))
 				e.progress(ActionUpdate, item.Name, err)
 				if errors.Is(err, ErrRateLimitExhausted) {
+					report.RemainingItems = len(items) - i
 					return report, ErrRateLimitExhausted
 				}
 				continue
