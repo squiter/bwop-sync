@@ -105,6 +105,32 @@ debug record when something unexpected happens from the scheduled run.
 
 ---
 
+## Vault visibility (service account setup)
+
+When `bwop-setup` creates new vaults using a service account, those vaults are
+owned by the service account and **not automatically visible** in the 1Password app
+for your personal account.
+
+To fix this, run once after setup (or after any new vault is created):
+
+```bash
+bwop-sync grant-access
+```
+
+This runs `op vault user grant` for every vault in your mapping. It auto-detects
+your account email from the registered `op` accounts — or pass it explicitly:
+
+```bash
+bwop-sync grant-access --email you@example.com
+```
+
+After this command completes, all synced items will appear in the 1Password app immediately.
+
+> **Note:** the service account must have the **Manage Vault** permission for this to work.
+> If you get a permission error, grant that permission at 1password.com → Service Accounts first.
+
+---
+
 ## Rate limiting
 
 1Password service accounts have a write quota (~40 writes/minute in practice).

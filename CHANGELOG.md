@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-28
+
+### Added
+- `bwop-sync grant-access` command: runs `op vault user grant` for every mapped vault so your personal account can see items created by the service account — auto-detects your email from registered `op` accounts
+- `GrantVaultAccess` support in the 1Password client (`op vault user grant`)
+
+### Fixed
+- Rate limit handling: sync now aborts immediately after retries are exhausted instead of repeating the full backoff cycle for every subsequent item
+- Rate limit message now shows how many items are still pending on abort
+- Write delay increased to 1.5 s (was 700 ms) for more reliable sustained throughput
+- Retry backoff reduced to 2 attempts (30 s + 60 s) — longer backoffs wasted time since the hourly quota cannot be cleared in minutes
+- `backfill` and `recover` now pass `--vault` to `op item get` as required by service accounts
+- "Usage:" text no longer printed after runtime errors (rate limit, BW session expired, etc.)
+
+### Documentation
+- New "Rate limiting" section in README explaining the ~100 writes/hour quota, that re-runs are safe (no duplicates), and the tip to run the first large sync overnight
+- New "How state tracking works" section explaining the hash-based change detection and the hidden `bwop_sync_bw_id` field
+
 ## [0.3.0] - 2026-04-28
 
 ### Added
