@@ -344,28 +344,33 @@ func buildVaultMapping(bwSession, opToken, opAccount string) error {
 
 	// Always ask where to put personal (non-collection) items.
 	fmt.Println("\nWhere should personal Bitwarden items (not in any collection) go?")
-	vaultIdx := chooseFromList(vaultNames(vaults))
+	personalVault, err := pickOrCreateVault(opClient, &vaults, false)
+	if err != nil {
+		return err
+	}
 	cfg.Mappings = append(cfg.Mappings, config.VaultMapping{
 		BWCollectionID: "personal",
 		BWName:         "Personal (no collection)",
-		OPVaultID:      vaults[vaultIdx].ID,
-		OPVaultName:    vaults[vaultIdx].Name,
+		OPVaultID:      personalVault.ID,
+		OPVaultName:    personalVault.Name,
 	})
 
 	// Map each collection.
 	for _, col := range collections {
 		fmt.Printf("\nBitwarden collection %q → which 1Password vault?\n", col.Name)
-		options := append(vaultNames(vaults), "  skip this collection")
-		idx := chooseFromList(options)
-		if idx == len(vaults) {
+		vault, err := pickOrCreateVault(opClient, &vaults, true)
+		if err != nil {
+			return err
+		}
+		if vault == nil {
 			fmt.Printf("  Skipping %q\n", col.Name)
 			continue
 		}
 		cfg.Mappings = append(cfg.Mappings, config.VaultMapping{
 			BWCollectionID: col.ID,
 			BWName:         col.Name,
-			OPVaultID:      vaults[idx].ID,
-			OPVaultName:    vaults[idx].Name,
+			OPVaultID:      vault.ID,
+			OPVaultName:    vault.Name,
 		})
 	}
 
@@ -501,11 +506,53 @@ func chooseFromList(options []string) int {
 	}
 }
 
-func vaultNames(vaults []onepassword.VaultInfo) []string {
-	names := make([]string, len(vaults))
-	for i, v := range vaults {
-		names[i] = fmt.Sprintf("%s (%s)", v.Name, v.ID)
+// pickOrCreateVault shows the vault list, a "Create new vault…" option, and
+// (when allowSkip is true) a "Skip" option. Returns nil vault when skipped.
+// The vaults slice is updated in-place when a new vault is created so
+// subsequent calls in the same setup run see it immediately.
+func pickOrCreateVault(opClient *onepassword.Client, vaults *[]onepassword.VaultInfo, allowSkip bool) (*onepassword.VaultInfo, error) {
+	for {
+		options := vaultLabels(*vaults)
+		options = append(options, "  [create new vault…]")
+		if allowSkip {
+			options = append(options, "  [skip this collection]")
+		}
+
+		idx := chooseFromList(options)
+		nVaults := len(*vaults)
+
+		switch {
+		case idx < nVaults:
+			v := (*vaults)[idx]
+			return &v, nil
+
+		case idx == nVaults: // create new vault
+			name := prompt("New vault name")
+			name = strings.TrimSpace(name)
+			if name == "" {
+				fmt.Println("Name cannot be empty, try again.")
+				continue
+			}
+			fmt.Printf("Creating vault %q…\n", name)
+			created, err := opClient.CreateVault(name)
+			if err != nil {
+				return nil, fmt.Errorf("creating vault %q: %w", name, err)
+			}
+			*vaults = append(*vaults, *created)
+			fmt.Printf("✓ Vault %q created (%s)\n", created.Name, created.ID)
+			return created, nil
+
+		default: // skip (only reachable when allowSkip is true)
+			return nil, nil
+		}
 	}
-	return names
+}
+
+func vaultLabels(vaults []onepassword.VaultInfo) []string {
+	labels := make([]string, len(vaults))
+	for i, v := range vaults {
+		labels[i] = fmt.Sprintf("%s (%s)", v.Name, v.ID)
+	}
+	return labels
 }
 
