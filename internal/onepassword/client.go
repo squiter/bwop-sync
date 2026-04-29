@@ -61,6 +61,127 @@ func newWithRunner(run RunFunc) *Client {
 	return &Client{run: run}
 }
 
+// MetaVaultName is the 1Password vault used to store bwop-sync metadata.
+// StateItemTitle is the title of the item that holds the serialised state.
+// stateFieldID is the field ID within that item that contains the JSON payload.
+const (
+	MetaVaultName  = "bwop-sync-meta"
+	StateItemTitle = "bwop-sync state"
+	stateFieldID   = "state_data"
+)
+
+// FindOrCreateVault returns the VaultInfo for the vault with the given name,
+// creating it if it does not yet exist.
+func (c *Client) FindOrCreateVault(name string) (*VaultInfo, error) {
+	vaults, err := c.ListVaults()
+	if err != nil {
+		return nil, err
+	}
+	for i := range vaults {
+		if vaults[i].Name == name {
+			return &vaults[i], nil
+		}
+	}
+	return c.CreateVault(name)
+}
+
+// GetCloudState fetches the state JSON stored in the bwop-sync-meta vault.
+// It returns nil, nil when the vault, item, or field does not exist yet —
+// that is the expected state on a fresh install and should not be treated as
+// an error by callers.
+func (c *Client) GetCloudState() ([]byte, error) {
+	vaults, err := c.ListVaults()
+	if err != nil {
+		return nil, fmt.Errorf("listing vaults: %w", err)
+	}
+
+	var metaVault *VaultInfo
+	for i := range vaults {
+		if vaults[i].Name == MetaVaultName {
+			metaVault = &vaults[i]
+			break
+		}
+	}
+	if metaVault == nil {
+		return nil, nil
+	}
+
+	items, err := c.ListItems(metaVault.ID)
+	if err != nil {
+		return nil, fmt.Errorf("listing items in meta vault: %w", err)
+	}
+
+	var stateItemID string
+	for _, item := range items {
+		if item.Title == StateItemTitle {
+			stateItemID = item.ID
+			break
+		}
+	}
+	if stateItemID == "" {
+		return nil, nil
+	}
+
+	full, err := c.GetItem(stateItemID, metaVault.ID)
+	if err != nil {
+		return nil, fmt.Errorf("getting state item: %w", err)
+	}
+
+	for _, f := range full.Fields {
+		if f.ID == stateFieldID {
+			if f.Value == "" {
+				return nil, nil
+			}
+			return []byte(f.Value), nil
+		}
+	}
+	return nil, nil
+}
+
+// PushCloudState writes the given state JSON into the bwop-sync-meta vault,
+// creating the vault and/or item if they do not already exist.
+func (c *Client) PushCloudState(data []byte) error {
+	vault, err := c.FindOrCreateVault(MetaVaultName)
+	if err != nil {
+		return fmt.Errorf("ensuring meta vault: %w", err)
+	}
+
+	items, err := c.ListItems(vault.ID)
+	if err != nil {
+		return fmt.Errorf("listing items in meta vault: %w", err)
+	}
+
+	stateField := Field{
+		ID:      stateFieldID,
+		Label:   "notesPlain",
+		Type:    FieldTypeString,
+		Purpose: PurposeNotes,
+		Value:   string(data),
+	}
+	template := Item{
+		Title:    StateItemTitle,
+		Category: CategorySecureNote,
+		Vault:    VaultRef{ID: vault.ID},
+		Fields:   []Field{stateField},
+	}
+
+	for _, item := range items {
+		if item.Title == StateItemTitle {
+			_, err = c.EditItem(item.ID, template)
+			if err != nil {
+				return fmt.Errorf("updating state item: %w", err)
+			}
+			return nil
+		}
+	}
+
+	_, err = c.CreateItem(template)
+	if err != nil {
+		return fmt.Errorf("creating state item: %w", err)
+	}
+	return nil
+}
+
 // ListAccounts returns all op accounts registered in the CLI.
 // This is a package-level function because it must run without an account filter.
 // The full stderr from op is included in the error so callers can surface it.

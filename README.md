@@ -264,6 +264,24 @@ Every 1Password item created by bwop-sync also carries a hidden concealed field
 1Password sidebar and exists only so that state can be rebuilt if `state.json` is
 ever lost.
 
+### Cloud state backup
+
+After every real sync (including rate-limit aborts), bwop-sync automatically pushes
+state to a dedicated `bwop-sync-meta` vault in 1Password. This vault is created
+on the first sync run that completes with any progress.
+
+This means:
+
+- **On a new machine**, running `bwop-sync sync` after `bwop-setup` will
+  automatically pull state from 1Password before syncing — no manual file copying
+  needed.
+- **If `state.json` is deleted**, the next sync pulls it back from 1P automatically.
+- **If state cannot be found anywhere** (e.g. the meta vault was deleted), you are
+  prompted to choose:
+  1. Recover from hidden `bwop_sync_bw_id` fields on existing 1Password items
+  2. Start fresh (may create duplicates if items already exist in 1Password)
+  3. Cancel
+
 ### Recovering a lost state.json
 
 If `state.json` is accidentally deleted, run:

@@ -124,7 +124,6 @@ func runRecover() error {
 
 	fmt.Println(bold("Recovering state.json from 1Password tags…"))
 
-	// Build BW item hash map keyed by BW ID.
 	fmt.Print("  Fetching Bitwarden items… ")
 	bwItems, err := bwClient.ListItems()
 	if err != nil {
@@ -132,21 +131,7 @@ func runRecover() error {
 	}
 	fmt.Printf("%s\n", green(fmt.Sprintf("%d items", len(bwItems))))
 
-	bwByID := make(map[string]bitwarden.Item, len(bwItems))
-	for _, item := range bwItems {
-		bwByID[item.ID] = item
-	}
-
-	statePath := filepath.Join(cfgDir, "state.json")
-	st, err := state.Load(statePath)
-	if err != nil {
-		return fmt.Errorf("loading state: %w", err)
-	}
-
-	recovered, skipped := 0, 0
-	vaultIDs := uniqueVaultIDs(cfg)
-
-	for _, vaultID := range vaultIDs {
+	for _, vaultID := range uniqueVaultIDs(cfg) {
 		fmt.Printf("  Scanning vault %s… ", gray(vaultID))
 		items, err := opClient.ListItems(vaultID)
 		if err != nil {
@@ -154,33 +139,13 @@ func runRecover() error {
 			continue
 		}
 		fmt.Printf("%s items\n", green(fmt.Sprintf("%d", len(items))))
+	}
 
-		for _, listed := range items {
-			full, err := opClient.GetItem(listed.ID, vaultID)
-			if err != nil || full == nil {
-				skipped++
-				continue
-			}
-			bwID := ""
-			for _, field := range full.Fields {
-				if field.ID == transformer.BWIDFieldID {
-					bwID = field.Value
-					break
-				}
-			}
-			if bwID == "" {
-				skipped++
-				continue
-			}
-			bwItem, ok := bwByID[bwID]
-			if !ok {
-				skipped++
-				continue
-			}
-			result := transformer.Transform(bwItem, vaultID)
-			st.Set(bwID, listed.ID, result.Hash)
-			recovered++
-		}
+	statePath := filepath.Join(cfgDir, "state.json")
+
+	st, recovered, skipped, err := rebuildStateFromOP(bwClient, opClient, cfg)
+	if err != nil {
+		return err
 	}
 
 	if err := st.Save(statePath); err != nil {
@@ -532,6 +497,16 @@ func runSync(dryRun bool) error {
 		return fmt.Errorf("loading state: %w", err)
 	}
 
+	if len(st.Entries) == 0 {
+		seeded, err := maybeLoadCloudState(opClient, statePath, bwClient, cfg)
+		if err != nil {
+			return err
+		}
+		if seeded != nil {
+			st = seeded
+		}
+	}
+
 	engine := sync.New(bwClient, opClient, cfg, st, logDir)
 
 	if dryRun {
@@ -541,7 +516,7 @@ func runSync(dryRun bool) error {
 	backupDir := filepath.Join(cfgDir, "backups")
 	runBackups(bwClient, opClient, cfg, backupDir)
 
-	return executeSync(engine, st, statePath, logDir, cfgDir)
+	return executeSync(engine, st, statePath, logDir, cfgDir, opClient)
 }
 
 func executeDryRun(engine *sync.Engine, logDir string) error {
@@ -562,7 +537,7 @@ func executeDryRun(engine *sync.Engine, logDir string) error {
 	return nil
 }
 
-func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir string) error {
+func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir string, opClient *onepassword.Client) error {
 	// Automatic pre-sync dry-run — logged for debugging.
 	preDryReport, err := engine.Run(true)
 	if err != nil {
@@ -597,6 +572,14 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 	// Save state for whatever completed before any abort.
 	if err := st.Save(statePath); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not save state: %v\n", err)
+	}
+
+	// Push state to 1Password even on rate-limit abort — partial progress is
+	// worth preserving in the cloud.
+	if pushErr := opClient.PushCloudState(marshalState(st)); pushErr != nil {
+		fmt.Fprintf(os.Stderr, "%s could not push state to 1Password: %v\n", yellow("⚠"), pushErr)
+	} else {
+		fmt.Printf("%s State synced to 1Password (%s)\n", green("✓"), gray(onepassword.MetaVaultName))
 	}
 
 	if errors.Is(runErr, sync.ErrRateLimitExhausted) {
@@ -709,4 +692,147 @@ func uniqueVaultIDs(cfg *config.Config) []string {
 func configDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "bwop-sync")
+}
+
+// isInteractive returns true when stdin is a real terminal (character device),
+// i.e. the process is running interactively and not under launchd/a pipe.
+func isInteractive() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// marshalState serialises st to JSON, ignoring errors (state is always valid).
+func marshalState(st *state.State) []byte {
+	data, _ := json.Marshal(st)
+	return data
+}
+
+// rebuildStateFromOP scans all mapped 1Password vaults for the hidden
+// bwop_sync_bw_id field and reconstructs the state from scratch.
+// It returns the rebuilt state, the count of recovered items, the count of
+// skipped items, and any fatal error.
+func rebuildStateFromOP(bwClient *bitwarden.Client, opClient *onepassword.Client, cfg *config.Config) (*state.State, int, int, error) {
+	bwItems, err := bwClient.ListItems()
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("listing BW items: %w", err)
+	}
+
+	bwByID := make(map[string]bitwarden.Item, len(bwItems))
+	for _, item := range bwItems {
+		bwByID[item.ID] = item
+	}
+
+	st := &state.State{Version: 1, Entries: make(map[string]state.Entry)}
+	recovered, skipped := 0, 0
+	vaultIDs := uniqueVaultIDs(cfg)
+
+	for _, vaultID := range vaultIDs {
+		items, err := opClient.ListItems(vaultID)
+		if err != nil {
+			skipped++
+			continue
+		}
+		for _, listed := range items {
+			full, err := opClient.GetItem(listed.ID, vaultID)
+			if err != nil || full == nil {
+				skipped++
+				continue
+			}
+			bwID := ""
+			for _, field := range full.Fields {
+				if field.ID == transformer.BWIDFieldID {
+					bwID = field.Value
+					break
+				}
+			}
+			if bwID == "" {
+				skipped++
+				continue
+			}
+			bwItem, ok := bwByID[bwID]
+			if !ok {
+				skipped++
+				continue
+			}
+			result := transformer.Transform(bwItem, vaultID)
+			st.Set(bwID, listed.ID, result.Hash)
+			recovered++
+		}
+	}
+
+	return st, recovered, skipped, nil
+}
+
+// interactiveStateRecovery prompts the user to choose how to handle a missing
+// cloud state. It must only be called when isInteractive() is true.
+func interactiveStateRecovery(bwClient *bitwarden.Client, opClient *onepassword.Client, cfg *config.Config, statePath string) (*state.State, error) {
+	fmt.Println("State not found in 1Password. How would you like to proceed?")
+	fmt.Println("  1) Recover — scan 1Password vaults for hidden bwop_sync_bw_id fields (recommended if items already exist)")
+	fmt.Println("  2) Start fresh — treat all Bitwarden items as new (may create duplicates if 1Password already has items)")
+	fmt.Println("  3) Cancel")
+	fmt.Print("Choice: ")
+
+	var choice int
+	fmt.Scanln(&choice)
+
+	switch choice {
+	case 1:
+		fmt.Print("Recovering… ")
+		st, recovered, skipped, err := rebuildStateFromOP(bwClient, opClient, cfg)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Printf("%s %d recovered, %d skipped\n", green("✓"), recovered, skipped)
+		if err := st.Save(statePath); err != nil {
+			return nil, fmt.Errorf("saving recovered state: %w", err)
+		}
+		return st, nil
+	case 2:
+		return &state.State{Version: 1, Entries: make(map[string]state.Entry)}, nil
+	default:
+		return nil, fmt.Errorf("cancelled")
+	}
+}
+
+// maybeLoadCloudState checks 1Password for an existing state and, if found,
+// seeds the local state file with it. It returns nil, nil when no cloud state
+// exists yet (fresh install). When running non-interactively and the cloud
+// lookup fails, the error is returned directly.
+func maybeLoadCloudState(opClient *onepassword.Client, statePath string, bwClient *bitwarden.Client, cfg *config.Config) (*state.State, error) {
+	fmt.Print(gray("  Checking 1Password for existing state… "))
+
+	data, err := opClient.GetCloudState()
+	if err != nil {
+		fmt.Println()
+		fmt.Fprintf(os.Stderr, "%s could not fetch cloud state: %v\n", yellow("⚠"), err)
+		if isInteractive() {
+			return interactiveStateRecovery(bwClient, opClient, cfg, statePath)
+		}
+		return nil, err
+	}
+
+	if data == nil {
+		fmt.Println(gray("not found"))
+		return nil, nil
+	}
+
+	var st state.State
+	if err := json.Unmarshal(data, &st); err != nil {
+		fmt.Println()
+		fmt.Fprintf(os.Stderr, "%s cloud state is corrupt: %v\n", yellow("⚠"), err)
+		if isInteractive() {
+			return interactiveStateRecovery(bwClient, opClient, cfg, statePath)
+		}
+		return nil, fmt.Errorf("cloud state corrupt: %w", err)
+	}
+	if st.Entries == nil {
+		st.Entries = make(map[string]state.Entry)
+	}
+
+	if err := st.Save(statePath); err != nil {
+		return nil, fmt.Errorf("seeding local state from cloud: %w", err)
+	}
+
+	fmt.Printf("%s %s\n", green("✓"), fmt.Sprintf("%d item(s) loaded from 1Password", len(st.Entries)))
+	return &st, nil
 }

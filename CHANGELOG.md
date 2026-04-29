@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-28
+
+### Added
+- Cloud state sync: `state.json` is now automatically pushed to a dedicated `bwop-sync-meta` 1Password vault after every real sync (including rate-limit aborts, so partial progress is preserved)
+- On a new machine with no local `state.json`, `bwop-sync sync` automatically pulls state from 1Password before syncing — no manual file copying needed
+- If state cannot be found anywhere, an interactive prompt offers three options: recover from hidden `bwop_sync_bw_id` fields on existing 1Password items, start fresh, or cancel; in non-interactive contexts (launchd) the error is returned cleanly instead of hanging
+
 ## [0.7.0] - 2026-04-28
 
 ### Added
