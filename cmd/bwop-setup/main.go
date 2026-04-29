@@ -503,6 +503,7 @@ func installLaunchAgent() error {
 	type plistData struct {
 		BinaryPath string
 		LogPath    string
+		EnvPath    string
 	}
 
 	tmpl, err := template.New("plist").Parse(plistTemplate)
@@ -521,7 +522,12 @@ func installLaunchAgent() error {
 	}
 	defer f.Close()
 
-	if err := tmpl.Execute(f, plistData{BinaryPath: binaryInstallPath(), LogPath: logPath}); err != nil {
+	data := plistData{
+		BinaryPath: binaryInstallPath(),
+		LogPath:    logPath,
+		EnvPath:    launchdPATH(),
+	}
+	if err := tmpl.Execute(f, data); err != nil {
 		return fmt.Errorf("writing plist: %w", err)
 	}
 
@@ -584,6 +590,14 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>sync</string>
   </array>
 
+  <!-- PATH is set at install time so launchd can find bw and op even
+       when they live in Homebrew paths not included in launchd's default env. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{.EnvPath}}</string>
+  </dict>
+
   <key>StartInterval</key>
   <integer>21600</integer>
 
@@ -598,6 +612,37 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>
 `
+
+// launchdPATH builds a PATH value for the launchd plist by finding where bw
+// and op actually live, then appending standard system directories. launchd
+// starts jobs with a minimal PATH that does not include Homebrew, so without
+// this the sync job cannot locate either CLI.
+func launchdPATH() string {
+	seen := make(map[string]bool)
+	var dirs []string
+	add := func(d string) {
+		if d != "" && !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	for _, bin := range []string{"bw", "op"} {
+		if p, err := exec.LookPath(bin); err == nil {
+			add(filepath.Dir(p))
+		}
+	}
+	for _, d := range []string{
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+		"/usr/sbin",
+		"/sbin",
+	} {
+		add(d)
+	}
+	return strings.Join(dirs, ":")
+}
 
 // --- terminal helpers ---
 

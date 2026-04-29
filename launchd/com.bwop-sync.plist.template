@@ -14,6 +14,7 @@
   Placeholders replaced at install time:
     {{.BinaryPath}}  → ~/.local/bin/bwop-sync
     {{.LogPath}}     → ~/Library/Logs/bwop-sync.log
+    {{.EnvPath}}     → directories of bw + op binaries plus standard system paths
 -->
 <plist version="1.0">
 <dict>
@@ -37,6 +38,12 @@
   <string>{{.LogPath}}</string>
 
   <!-- Do not run immediately when loaded — wait for the first interval. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{.EnvPath}}</string>
+  </dict>
+
   <key>RunAtLoad</key>
   <false/>
 </dict>
