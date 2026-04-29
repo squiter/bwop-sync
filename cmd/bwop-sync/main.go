@@ -468,6 +468,9 @@ func versionCmd() *cobra.Command {
 }
 
 func runSync(dryRun bool) error {
+	fmt.Printf("\n─── bwop-sync %s ───────────────────────── %s\n",
+		version, time.Now().UTC().Format("2006-01-02 15:04:05 UTC"))
+
 	cfgDir := configDir()
 	logDir := filepath.Join(cfgDir, "logs")
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-29
+
+### Fixed
+- LaunchAgent now works reliably on macOS: the plist is generated with an `EnvironmentVariables.PATH` that includes the actual directories of `bw` and `op` (detected at install time), so Homebrew-installed CLIs in `/opt/homebrew/bin` are found when the job runs headlessly
+- `bwop-setup launchd` unloads the existing agent before writing the new plist — previously reinstalling silently left the old agent running
+- `bwop-setup install` now copies the binary sitting next to the running `bwop-setup` binary first, rather than looking up `bwop-sync` via PATH (which could find a stale version installed by `go install`)
+- Keychain items are now stored with `-A` so any application (including launchd) can read them without triggering a GUI confirmation dialog
+- `bwop-sync unlock` now correctly hides the password while typing (`stty` commands were missing `Stdin = os.Stdin`)
+- `make build` now injects the version from the current git tag via `-ldflags`; bare `go build` without the Makefile produced `dev`
+
+### Added
+- Each sync run now prints a separator line with the version and UTC timestamp, making it easy to distinguish runs in a shared log file
+
 ## [0.9.1] - 2026-04-28
 
 ### Fixed
