@@ -87,6 +87,38 @@ bwop-setup
 > unlocked for the CLI integration to work, which isn't guaranteed in a scheduled context.
 > Create a service account at https://developer.1password.com/docs/service-accounts/
 
+### Re-running individual steps
+
+You don't have to go through the full wizard again to update a single part.
+`bwop-setup` exposes each step as a sub-command:
+
+| Command | What it does |
+|---------|-------------|
+| `bwop-setup bitwarden` | Unlock Bitwarden and refresh the session token in Keychain |
+| `bwop-setup onepassword` | Re-configure 1Password auth (account or service token) |
+| `bwop-setup mapping` | Rebuild the vault mapping without touching credentials |
+| `bwop-setup install` | Copy the `bwop-sync` binary to `/usr/local/bin` |
+| `bwop-setup launchd` | Install or reinstall the LaunchAgent |
+
+Examples:
+
+```bash
+# BW session expired and you want to re-authenticate setup credentials
+bwop-setup bitwarden
+
+# You rotated your 1Password service account token
+bwop-setup onepassword
+
+# You added a new Bitwarden collection and need to map it
+bwop-setup mapping
+
+# You rebuilt the binary and want to update /usr/local/bin
+bwop-setup install
+
+# You want to reinstall the LaunchAgent after moving to a new Go path
+bwop-setup launchd
+```
+
 ---
 
 ## Manual sync
@@ -168,29 +200,15 @@ saved to the macOS Keychain (under the service name `bwop-sync`).
 
 ### Scheduled syncs and expired sessions
 
-When `bwop-sync unlock` runs, it asks whether to save your master password in
-Keychain for automatic re-unlock:
-
-```
-Save master password in Keychain for automatic re-unlock by launchd? [y/N]
-```
-
-If you answer **y**, the scheduled sync will silently re-unlock Bitwarden
-whenever the session expires and continue without any manual intervention.
-
-If you answer **n** (or skip), the sync will fail when the session expires:
+The Bitwarden session token expires when the vault locks. When this happens,
+the scheduled sync will fail with:
 
 ```
 Error: Bitwarden session has expired. Run `bwop-sync unlock` to refresh.
 ```
 
-In that case, open a terminal and run `bwop-sync unlock` — the next scheduled
-run will succeed automatically.
-
-> **Security note:** your master password is stored in the macOS Keychain,
-> encrypted and protected by your login password. This is the same protection
-> that covers your 1Password secret key and BW session token already stored
-> there. Only opt in if you are comfortable with this trade-off.
+Open a terminal and run `bwop-sync unlock` — the next scheduled run will
+succeed automatically.
 
 ---
 

@@ -41,8 +41,7 @@ func Delete(account string) error {
 
 // Accounts used throughout the tool.
 const (
-	AccountBWSession  = "bw-session"
-	AccountBWPassword = "bw-master-password" // optional; stored only when user explicitly opts in
-	AccountOPToken    = "op-service-account-token"
-	AccountOPAccount  = "op-account-shorthand"
+	AccountBWSession = "bw-session"
+	AccountOPToken   = "op-service-account-token"
+	AccountOPAccount = "op-account-shorthand"
 )

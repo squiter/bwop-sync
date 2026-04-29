@@ -14,6 +14,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/spf13/cobra"
 	"github.com/squiter/bwop-sync/internal/bitwarden"
 	"github.com/squiter/bwop-sync/internal/config"
 	"github.com/squiter/bwop-sync/internal/keychain"
@@ -21,19 +22,37 @@ import (
 )
 
 func main() {
+	root := &cobra.Command{
+		Use:   "bwop-setup",
+		Short: "Interactive setup wizard for bwop-sync",
+		Long: `bwop-setup configures bwop-sync for first use.
+
+Run without arguments to go through the full interactive wizard.
+Use sub-commands to re-run individual steps:
+
+  bwop-setup bitwarden   — unlock Bitwarden and store the session token
+  bwop-setup onepassword — configure 1Password authentication
+  bwop-setup mapping     — rebuild the vault mapping
+  bwop-setup install     — copy the bwop-sync binary to /usr/local/bin
+  bwop-setup launchd     — install or reinstall the LaunchAgent`,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAll()
+		},
+	}
+
+	root.AddCommand(bitwardenCmd(), onepasswordCmd(), mappingCmd(), installCmd(), launchdCmd())
+
+	if err := root.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runAll() error {
 	fmt.Println("=== bwop-setup ===")
 	fmt.Println("This wizard configures the Bitwarden → 1Password sync tool.")
 	fmt.Println()
 
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "\nSetup failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println("\nSetup complete! Run `bwop-sync sync --dry-run` to preview the first sync.")
-}
-
-func run() error {
 	if err := checkDeps(); err != nil {
 		return err
 	}
@@ -53,19 +72,8 @@ func run() error {
 		return err
 	}
 
-	buildMapping := true
-	cfgPath := config.DefaultPath()
-	if _, err := os.Stat(cfgPath); err == nil {
-		fmt.Printf("\nA vault mapping already exists at %s\n", cfgPath)
-		if !promptYesNo("Overwrite it with a new mapping?") {
-			fmt.Println("Keeping existing mapping.")
-			buildMapping = false
-		}
-	}
-	if buildMapping {
-		if err := buildVaultMapping(bwSession, opToken, opAccount); err != nil {
-			return err
-		}
+	if err := runMappingWithGuard(bwSession, opToken, opAccount); err != nil {
+		return err
 	}
 
 	if promptYesNo("Install the launchd agent to sync every 6 hours?") {
@@ -75,7 +83,97 @@ func run() error {
 		}
 	}
 
+	fmt.Println("\nSetup complete! Run `bwop-sync sync --dry-run` to preview the first sync.")
 	return nil
+}
+
+func bitwardenCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:          "bitwarden",
+		Short:        "Unlock Bitwarden and store the session token in Keychain",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := exec.LookPath("bw"); err != nil {
+				return fmt.Errorf("bw not found in PATH — install via: brew bundle")
+			}
+			_, err := unlockBitwarden()
+			return err
+		},
+	}
+}
+
+func onepasswordCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:          "onepassword",
+		Short:        "Configure 1Password authentication (account selection + service token)",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := exec.LookPath("op"); err != nil {
+				return fmt.Errorf("op not found in PATH — install via: brew bundle")
+			}
+			opAccount, err := selectOPAccount()
+			if err != nil {
+				return err
+			}
+			_, err = configureOnePassword(opAccount)
+			return err
+		},
+	}
+}
+
+func mappingCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:          "mapping",
+		Short:        "Rebuild the Bitwarden → 1Password vault mapping",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			bwSession, err := keychain.Read(keychain.AccountBWSession)
+			if err != nil {
+				return fmt.Errorf("BW session not found — run `bwop-setup bitwarden` first")
+			}
+			opToken, _ := keychain.Read(keychain.AccountOPToken)
+			opAccount, _ := keychain.Read(keychain.AccountOPAccount)
+			if opAccount == "" && opToken == "" {
+				return fmt.Errorf("1Password auth not configured — run `bwop-setup onepassword` first")
+			}
+			return runMappingWithGuard(bwSession, opToken, opAccount)
+		},
+	}
+}
+
+func installCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:          "install",
+		Short:        "Copy the bwop-sync binary to /usr/local/bin",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return installBinary()
+		},
+	}
+}
+
+func launchdCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:          "launchd",
+		Short:        "Install or reinstall the LaunchAgent for scheduled syncing",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return installLaunchAgent()
+		},
+	}
+}
+
+// runMappingWithGuard prompts before overwriting an existing mapping.
+func runMappingWithGuard(bwSession, opToken, opAccount string) error {
+	cfgPath := config.DefaultPath()
+	if _, err := os.Stat(cfgPath); err == nil {
+		fmt.Printf("\nA vault mapping already exists at %s\n", cfgPath)
+		if !promptYesNo("Overwrite it with a new mapping?") {
+			fmt.Println("Keeping existing mapping.")
+			return nil
+		}
+	}
+	return buildVaultMapping(bwSession, opToken, opAccount)
 }
 
 // bwUnlock runs `bw unlock` with the given password and returns the raw session

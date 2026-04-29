@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-28
+
+### Added
+- `bwop-setup` is now a proper CLI with sub-commands — each setup step can be re-run independently without going through the full wizard:
+  - `bwop-setup bitwarden` — unlock Bitwarden and refresh the session token in Keychain
+  - `bwop-setup onepassword` — re-configure 1Password authentication (account or service token)
+  - `bwop-setup mapping` — rebuild the vault mapping (reads credentials from Keychain)
+  - `bwop-setup install` — copy the `bwop-sync` binary to `/usr/local/bin`
+  - `bwop-setup launchd` — install or reinstall the LaunchAgent
+- Running `bwop-setup` with no sub-command still runs the full interactive wizard (unchanged behaviour)
+
+### Removed
+- Automatic re-unlock feature from `bwop-sync unlock`: the master password prompt and Keychain storage of the password have been removed — `bwop-sync unlock` now stores only the session token, as originally intended
+
 ## [0.6.0] - 2026-04-28
 
 ### Added

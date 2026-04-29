@@ -436,45 +436,10 @@ func runUnlock() error {
 		password = ""
 		return fmt.Errorf("storing session in Keychain: %w", err)
 	}
-	fmt.Println(green("✓") + " Bitwarden session stored in Keychain")
-
-	fmt.Print("\nSave master password in Keychain for automatic re-unlock by launchd? [y/N] ")
-	var answer string
-	fmt.Scanln(&answer)
-	if strings.ToLower(strings.TrimSpace(answer)) == "y" {
-		if err := keychain.Store(keychain.AccountBWPassword, password); err != nil {
-			fmt.Fprintf(os.Stderr, "%s could not save password: %v\n", yellow("⚠"), err)
-		} else {
-			fmt.Println(green("✓") + " Master password saved — launchd will re-unlock automatically")
-		}
-	} else {
-		// Remove any previously stored password if the user declines.
-		keychain.Delete(keychain.AccountBWPassword)
-		fmt.Println(gray("  Password not saved. Run `bwop-sync unlock` if the session expires."))
-	}
 	password = ""
-
+	fmt.Println(green("✓") + " Bitwarden session stored in Keychain")
 	fmt.Println(gray("\n  Run `bwop-sync sync` to sync your vault."))
 	return nil
-}
-
-// autoUnlock attempts to re-unlock Bitwarden using a master password stored in
-// Keychain (only present if the user opted in during bwop-sync unlock).
-// Returns the new session token, or an error if no password is stored or unlock fails.
-func autoUnlock() (string, error) {
-	password, err := keychain.Read(keychain.AccountBWPassword)
-	if err != nil || password == "" {
-		return "", fmt.Errorf("no stored password")
-	}
-	session, err := bwUnlock(password)
-	password = ""
-	if err != nil {
-		return "", err
-	}
-	if storeErr := keychain.Store(keychain.AccountBWSession, session); storeErr != nil {
-		return "", storeErr
-	}
-	return session, nil
 }
 
 // bwUnlock runs `bw unlock` and returns the raw session token.
@@ -558,11 +523,7 @@ func runSync(dryRun bool) error {
 	}
 
 	if !bwClient.IsSessionValid() {
-		refreshed, err := autoUnlock()
-		if err != nil {
-			return fmt.Errorf("Bitwarden session has expired.\nRun `bwop-sync unlock` to refresh.")
-		}
-		bwClient = bitwarden.New(refreshed)
+		return fmt.Errorf("Bitwarden session has expired.\nRun `bwop-sync unlock` to refresh.")
 	}
 
 	statePath := filepath.Join(cfgDir, "state.json")
