@@ -53,14 +53,15 @@ mv bwop-sync_darwin_arm64  ~/.local/bin/bwop-sync
 mv bwop-setup_darwin_arm64 ~/.local/bin/bwop-setup
 ```
 
-Make sure `~/.local/bin` is in your `PATH`. For fish:
-```fish
-fish_add_path ~/.local/bin
-```
-For bash/zsh, add to your shell rc:
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+> **PATH note:** make sure `~/.local/bin` is in your shell's `PATH` so you can run the commands from any terminal.
+> ```fish
+> # fish (one-time, persists permanently)
+> fish_add_path ~/.local/bin
+> ```
+> ```bash
+> # bash / zsh — add to ~/.bashrc or ~/.zshrc
+> export PATH="$HOME/.local/bin:$PATH"
+> ```
 
 3. Verify:
 
@@ -123,6 +124,7 @@ bwop-setup onepassword
 bwop-setup mapping
 
 # You rebuilt the binary and want to update ~/.local/bin
+# (make sure ~/.local/bin is in your PATH — see Installation above)
 bwop-setup install
 
 # You want to reinstall the LaunchAgent after moving to a new Go path
