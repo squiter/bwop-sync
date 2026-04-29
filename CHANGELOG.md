@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-28
+
+### Changed
+- `bwop-setup` now copies `bwop-sync` to `/usr/local/bin/bwop-sync` during LaunchAgent installation and always uses that stable path in the plist — previously the plist pointed to the Go toolchain directory, which broke silently whenever Go was upgraded via mise or similar version managers
+
+### Fixed
+- LaunchAgent no longer stops working after `mise upgrade go` or similar toolchain changes
+
+### Upgrade notes
+Re-run `bwop-setup` and choose to reinstall the LaunchAgent when prompted. It will copy the current binary to `/usr/local/bin/bwop-sync` and rewrite the plist with the stable path.
+
 ## [0.4.1] - 2026-04-28
 
 ### Fixed

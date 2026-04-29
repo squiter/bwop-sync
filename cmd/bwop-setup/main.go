@@ -382,13 +382,14 @@ func buildVaultMapping(bwSession, opToken, opAccount string) error {
 	return nil
 }
 
-// installLaunchAgent generates and installs the launchd plist.
+const installPath = "/usr/local/bin/bwop-sync"
+
+// installLaunchAgent copies the bwop-sync binary to /usr/local/bin and installs
+// the launchd plist. Using a fixed, stable path prevents the plist from breaking
+// when the Go toolchain is upgraded via mise or similar version managers.
 func installLaunchAgent() error {
-	binaryPath, err := exec.LookPath("bwop-sync")
-	if err != nil {
-		// Fall back to GOPATH bin.
-		home, _ := os.UserHomeDir()
-		binaryPath = filepath.Join(home, "go", "bin", "bwop-sync")
+	if err := installBinary(); err != nil {
+		return fmt.Errorf("installing binary: %w", err)
 	}
 
 	home, _ := os.UserHomeDir()
@@ -411,7 +412,7 @@ func installLaunchAgent() error {
 	}
 	defer f.Close()
 
-	if err := tmpl.Execute(f, plistData{BinaryPath: binaryPath, LogPath: logPath}); err != nil {
+	if err := tmpl.Execute(f, plistData{BinaryPath: installPath, LogPath: logPath}); err != nil {
 		return fmt.Errorf("writing plist: %w", err)
 	}
 
@@ -421,6 +422,33 @@ func installLaunchAgent() error {
 
 	fmt.Printf("✓ LaunchAgent installed → %s\n", plistDest)
 	fmt.Printf("  Syncing every 6 hours. Logs → %s\n", logPath)
+	return nil
+}
+
+// installBinary copies the running bwop-sync binary to /usr/local/bin.
+// This gives the launchd plist a stable path that survives Go toolchain upgrades.
+func installBinary() error {
+	src, err := exec.LookPath("bwop-sync")
+	if err != nil {
+		// Try the directory next to the running bwop-setup binary.
+		self, _ := os.Executable()
+		src = filepath.Join(filepath.Dir(self), "bwop-sync")
+	}
+
+	srcData, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("reading binary from %s: %w\nBuild bwop-sync first and ensure it is in your PATH or next to bwop-setup.", src, err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(installPath), 0755); err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(installPath), err)
+	}
+
+	if err := os.WriteFile(installPath, srcData, 0755); err != nil {
+		return fmt.Errorf("writing to %s: %w\nTry: sudo mkdir -p /usr/local/bin && sudo chown $(whoami) /usr/local/bin", installPath, err)
+	}
+
+	fmt.Printf("✓ Binary installed → %s\n", installPath)
 	return nil
 }
 
