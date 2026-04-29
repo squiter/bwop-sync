@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -42,12 +44,13 @@ func bold(s string) string   { return colorBold + s + colorReset }
 
 func main() {
 	root := &cobra.Command{
-		Use:   "bwop-sync",
-		Short: "Sync your Bitwarden vault to 1Password",
-		Long:  "bwop-sync keeps your Bitwarden vault in sync with 1Password.\nRun `bwop-setup` first to configure vault mappings and credentials.",
+		Use:          "bwop-sync",
+		Short:        "Sync your Bitwarden vault to 1Password",
+		Long:         "bwop-sync keeps your Bitwarden vault in sync with 1Password.\nRun `bwop-setup` first to configure vault mappings and credentials.",
+		SilenceUsage: true,
 	}
 
-	root.AddCommand(syncCmd(), recoverCmd(), backfillCmd(), grantAccessCmd(), versionCmd())
+	root.AddCommand(syncCmd(), recoverCmd(), backfillCmd(), grantAccessCmd(), unlockCmd(), versionCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -399,6 +402,91 @@ func runGrantAccess(email string) error {
 	return nil
 }
 
+func unlockCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unlock",
+		Short: "Unlock Bitwarden and store the session token in Keychain",
+		Long: `unlock prompts for your Bitwarden master password, unlocks the vault,
+and stores the session token in the macOS Keychain.
+
+Your master password is never stored — only the temporary session token is saved.
+Run this whenever bwop-sync reports that the Bitwarden session has expired.`,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUnlock()
+		},
+	}
+}
+
+func runUnlock() error {
+	fmt.Print("Bitwarden master password (not stored): ")
+	password, err := readSecret()
+	if err != nil {
+		return fmt.Errorf("reading password: %w", err)
+	}
+	fmt.Println()
+
+	session, err := bwUnlock(password)
+	password = "" // discard immediately
+	if err != nil {
+		return err
+	}
+
+	if err := keychain.Store(keychain.AccountBWSession, session); err != nil {
+		return fmt.Errorf("storing session in Keychain: %w", err)
+	}
+
+	fmt.Println(green("✓") + " Bitwarden session stored in Keychain")
+	fmt.Println(gray("  Run `bwop-sync sync` to sync your vault."))
+	return nil
+}
+
+// bwUnlock runs `bw unlock` and returns the raw session token.
+// The password is passed via a short-lived env var — never written to disk.
+func bwUnlock(password string) (string, error) {
+	const pwEnvKey = "BWOP_TMP_PASS"
+	var stderr bytes.Buffer
+	cmd := exec.Command("bw", "unlock", "--raw", "--passwordenv", pwEnvKey)
+	cmd.Env = append(os.Environ(), pwEnvKey+"="+password)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = "wrong password, or vault is not logged in — run `bw login` first"
+		}
+		return "", fmt.Errorf("bw unlock: %s", detail)
+	}
+	session := strings.TrimSpace(string(out))
+	if session == "" {
+		return "", fmt.Errorf("bw unlock returned an empty session token")
+	}
+	return session, nil
+}
+
+// readSecret reads a line from stdin without echoing characters.
+func readSecret() (string, error) {
+	// Disable terminal echo via stty.
+	if err := exec.Command("stty", "-echo").Run(); err == nil {
+		defer exec.Command("stty", "echo").Run()
+	}
+	var buf strings.Builder
+	b := make([]byte, 1)
+	for {
+		n, err := os.Stdin.Read(b)
+		if n > 0 {
+			if b[0] == '\n' || b[0] == '\r' {
+				break
+			}
+			buf.WriteByte(b[0])
+		}
+		if err != nil {
+			break
+		}
+	}
+	return buf.String(), nil
+}
+
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -420,7 +508,7 @@ func runSync(dryRun bool) error {
 
 	bwSession, err := keychain.Read(keychain.AccountBWSession)
 	if err != nil {
-		return fmt.Errorf("BW session not found in Keychain.\nRun `scripts/bwop-unlock.sh` to unlock Bitwarden.")
+		return fmt.Errorf("BW session not found in Keychain.\nRun `bwop-sync unlock` to unlock Bitwarden.")
 	}
 	opToken, _ := keychain.Read(keychain.AccountOPToken)
 	opAccount, _ := keychain.Read(keychain.AccountOPAccount)
@@ -434,7 +522,7 @@ func runSync(dryRun bool) error {
 	}
 
 	if !bwClient.IsSessionValid() {
-		return fmt.Errorf("Bitwarden session has expired.\nRun `scripts/bwop-unlock.sh` to refresh.")
+		return fmt.Errorf("Bitwarden session has expired.\nRun `bwop-sync unlock` to refresh.")
 	}
 
 	statePath := filepath.Join(cfgDir, "state.json")

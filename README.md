@@ -160,11 +160,29 @@ because unchanged items are skipped entirely.
 The Bitwarden session token expires when the vault locks. Refresh it with:
 
 ```bash
-bash scripts/bwop-unlock.sh
+bwop-sync unlock
 ```
 
 Your master password is **never stored** — only the temporary session token is
 saved to the macOS Keychain (under the service name `bwop-sync`).
+
+### Scheduled syncs and expired sessions
+
+When the launchd agent runs in the background, it has no terminal to prompt
+for a password. If the Bitwarden session has expired, the sync will fail with:
+
+```
+Error: Bitwarden session has expired. Run `bwop-sync unlock` to refresh.
+```
+
+Check `~/Library/Logs/bwop-sync.log` after scheduled runs. If you see this
+error, open a terminal and run `bwop-sync unlock` to restore the session —
+the next scheduled run will succeed automatically.
+
+This is a Bitwarden CLI limitation: the vault requires the master password for
+decryption and there is no way to automate that step headlessly. Keeping the
+Bitwarden app open and the vault unlocked on your Mac reduces how often the
+token expires.
 
 ---
 
