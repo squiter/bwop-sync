@@ -1,8 +1,10 @@
 .PHONY: build setup sync dry-run test install clean
 
+VERSION := $(shell git describe --tags --always --dirty)
+
 build:
-	go build -o bin/bwop-sync  ./cmd/bwop-sync
-	go build -o bin/bwop-setup ./cmd/bwop-setup
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/bwop-sync  ./cmd/bwop-sync
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/bwop-setup ./cmd/bwop-setup
 
 setup: build
 	./bin/bwop-setup

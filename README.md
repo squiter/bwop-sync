@@ -346,14 +346,16 @@ passkey in 1Password on the affected site.
 # Download dependencies (run once after cloning)
 go mod tidy
 
-# Build both binaries into ./bin/
-go build -o bin/bwop-sync  ./cmd/bwop-sync
-go build -o bin/bwop-setup ./cmd/bwop-setup
+# Build both binaries into ./bin/ with correct version from git tag
+make build
 
-# Or install to ~/go/bin/ (adds them to your PATH if ~/go/bin is in PATH)
-go install ./cmd/bwop-sync
-go install ./cmd/bwop-setup
+# Then install to ~/.local/bin
+bin/bwop-setup install
 ```
+
+> **Note:** running bare `go build` without the Makefile will produce binaries
+> that report `version dev`. Always use `make build` so the version is injected
+> from the current git tag via `-ldflags`.
 
 ---
 
