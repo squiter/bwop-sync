@@ -168,21 +168,29 @@ saved to the macOS Keychain (under the service name `bwop-sync`).
 
 ### Scheduled syncs and expired sessions
 
-When the launchd agent runs in the background, it has no terminal to prompt
-for a password. If the Bitwarden session has expired, the sync will fail with:
+When `bwop-sync unlock` runs, it asks whether to save your master password in
+Keychain for automatic re-unlock:
+
+```
+Save master password in Keychain for automatic re-unlock by launchd? [y/N]
+```
+
+If you answer **y**, the scheduled sync will silently re-unlock Bitwarden
+whenever the session expires and continue without any manual intervention.
+
+If you answer **n** (or skip), the sync will fail when the session expires:
 
 ```
 Error: Bitwarden session has expired. Run `bwop-sync unlock` to refresh.
 ```
 
-Check `~/Library/Logs/bwop-sync.log` after scheduled runs. If you see this
-error, open a terminal and run `bwop-sync unlock` to restore the session —
-the next scheduled run will succeed automatically.
+In that case, open a terminal and run `bwop-sync unlock` — the next scheduled
+run will succeed automatically.
 
-This is a Bitwarden CLI limitation: the vault requires the master password for
-decryption and there is no way to automate that step headlessly. Keeping the
-Bitwarden app open and the vault unlocked on your Mac reduces how often the
-token expires.
+> **Security note:** your master password is stored in the macOS Keychain,
+> encrypted and protected by your login password. This is the same protection
+> that covers your 1Password secret key and BW session token already stored
+> there. Only opt in if you are comfortable with this trade-off.
 
 ---
 

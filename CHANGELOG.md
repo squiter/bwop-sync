@@ -11,13 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `bwop-sync unlock` command: prompts for the Bitwarden master password, unlocks the vault, and stores the session token in Keychain — replaces the `scripts/bwop-unlock.sh` shell script which is not available when installing from a release binary
+- Optional master password storage in Keychain: `bwop-sync unlock` asks whether to save the password for automatic re-unlock by launchd — if saved, expired sessions are refreshed headlessly without any manual step
 
 ### Fixed
-- `Usage:` text no longer printed after any runtime error (moved `SilenceUsage` to the root command, which also covers subcommands)
+- `Usage:` text no longer printed after any runtime error (moved `SilenceUsage` to the root command)
 - All error messages now reference `bwop-sync unlock` instead of `scripts/bwop-unlock.sh`
-
-### Documentation
-- README "Session management" section now explains the launchd/expired-session limitation and what to do when scheduled syncs fail with an expired session error
+- Scheduled syncs now attempt automatic re-unlock when the session has expired, using the stored password if available
 
 ## [0.5.0] - 2026-04-28
 

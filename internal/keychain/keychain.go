@@ -1,6 +1,5 @@
 // Package keychain wraps the macOS `security` CLI to store and retrieve secrets
-// without importing a CGo dependency. Only session tokens are stored — never the
-// master password.
+// without importing a CGo dependency.
 package keychain
 
 import (
@@ -43,6 +42,7 @@ func Delete(account string) error {
 // Accounts used throughout the tool.
 const (
 	AccountBWSession  = "bw-session"
+	AccountBWPassword = "bw-master-password" // optional; stored only when user explicitly opts in
 	AccountOPToken    = "op-service-account-token"
 	AccountOPAccount  = "op-account-shorthand"
 )
