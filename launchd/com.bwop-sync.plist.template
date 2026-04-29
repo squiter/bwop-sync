@@ -7,12 +7,12 @@
   Run `bwop-setup` to generate and install the real plist at:
     ~/Library/LaunchAgents/com.bwop-sync.plist
 
-  bwop-setup copies the bwop-sync binary to /usr/local/bin so the plist
+  bwop-setup copies the bwop-sync binary to ~/.local/bin so the plist
   always points to a stable path — not a Go toolchain version directory
   that breaks when mise or similar tools upgrade Go.
 
   Placeholders replaced at install time:
-    {{.BinaryPath}}  → /usr/local/bin/bwop-sync
+    {{.BinaryPath}}  → ~/.local/bin/bwop-sync
     {{.LogPath}}     → ~/Library/Logs/bwop-sync.log
 -->
 <plist version="1.0">

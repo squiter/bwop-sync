@@ -48,8 +48,18 @@ This installs `bw` (Bitwarden CLI) and `op` (1Password CLI).
 ```bash
 # replace arm64 with amd64 if you're on Intel
 chmod +x bwop-sync_darwin_arm64 bwop-setup_darwin_arm64
-sudo mv bwop-sync_darwin_arm64  /usr/local/bin/bwop-sync
-sudo mv bwop-setup_darwin_arm64 /usr/local/bin/bwop-setup
+mkdir -p ~/.local/bin
+mv bwop-sync_darwin_arm64  ~/.local/bin/bwop-sync
+mv bwop-setup_darwin_arm64 ~/.local/bin/bwop-setup
+```
+
+Make sure `~/.local/bin` is in your `PATH`. For fish:
+```fish
+fish_add_path ~/.local/bin
+```
+For bash/zsh, add to your shell rc:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 3. Verify:
@@ -61,7 +71,7 @@ bwop-sync version
 > macOS may block the binaries on first run with a "cannot be opened because the developer cannot be verified" message.
 > Right-click the binary in Finder → Open, or run:
 > ```bash
-> xattr -d com.apple.quarantine /usr/local/bin/bwop-sync /usr/local/bin/bwop-setup
+> xattr -d com.apple.quarantine ~/.local/bin/bwop-sync ~/.local/bin/bwop-setup
 > ```
 
 ### Build from source
@@ -97,7 +107,7 @@ You don't have to go through the full wizard again to update a single part.
 | `bwop-setup bitwarden` | Unlock Bitwarden and refresh the session token in Keychain |
 | `bwop-setup onepassword` | Re-configure 1Password auth (account or service token) |
 | `bwop-setup mapping` | Rebuild the vault mapping without touching credentials |
-| `bwop-setup install` | Copy the `bwop-sync` binary to `/usr/local/bin` |
+| `bwop-setup install` | Copy the `bwop-sync` binary to `~/.local/bin` |
 | `bwop-setup launchd` | Install or reinstall the LaunchAgent |
 
 Examples:
@@ -112,7 +122,7 @@ bwop-setup onepassword
 # You added a new Bitwarden collection and need to map it
 bwop-setup mapping
 
-# You rebuilt the binary and want to update /usr/local/bin
+# You rebuilt the binary and want to update ~/.local/bin
 bwop-setup install
 
 # You want to reinstall the LaunchAgent after moving to a new Go path

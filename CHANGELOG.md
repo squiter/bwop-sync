@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-28
+
+### Changed
+- `bwop-setup install` (and the install step in the full wizard) now copies `bwop-sync` to `~/.local/bin/bwop-sync` instead of `/usr/local/bin/bwop-sync` — no `sudo` required; the directory is created automatically if it does not exist
+
+### Upgrade notes
+Re-run `bwop-setup launchd` to reinstall the LaunchAgent plist pointing to the new path. If you had the old binary at `/usr/local/bin/bwop-sync` you can remove it manually.
+
 ## [0.8.1] - 2026-04-28
 
 ### Tests

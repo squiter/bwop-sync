@@ -480,7 +480,13 @@ func buildVaultMapping(bwSession, opToken, opAccount string) error {
 	return nil
 }
 
-const installPath = "/usr/local/bin/bwop-sync"
+// binaryInstallPath returns the stable path where bwop-sync is installed.
+// ~/.local/bin is user-writable (no sudo needed) and stable across Go toolchain
+// upgrades, which is why the launchd plist always points here.
+func binaryInstallPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "bin", "bwop-sync")
+}
 
 // installLaunchAgent copies the bwop-sync binary to /usr/local/bin and installs
 // the launchd plist. Using a fixed, stable path prevents the plist from breaking
@@ -510,7 +516,7 @@ func installLaunchAgent() error {
 	}
 	defer f.Close()
 
-	if err := tmpl.Execute(f, plistData{BinaryPath: installPath, LogPath: logPath}); err != nil {
+	if err := tmpl.Execute(f, plistData{BinaryPath: binaryInstallPath(), LogPath: logPath}); err != nil {
 		return fmt.Errorf("writing plist: %w", err)
 	}
 
@@ -523,8 +529,9 @@ func installLaunchAgent() error {
 	return nil
 }
 
-// installBinary copies the running bwop-sync binary to /usr/local/bin.
-// This gives the launchd plist a stable path that survives Go toolchain upgrades.
+// installBinary copies the running bwop-sync binary to ~/.local/bin.
+// That directory is user-writable (no sudo) and stable across Go toolchain
+// upgrades, so the launchd plist never breaks.
 func installBinary() error {
 	src, err := exec.LookPath("bwop-sync")
 	if err != nil {
@@ -533,20 +540,23 @@ func installBinary() error {
 		src = filepath.Join(filepath.Dir(self), "bwop-sync")
 	}
 
-	srcData, err := os.ReadFile(src)
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("bwop-sync binary not found at %s\nBuild it first: go build ./cmd/bwop-sync", src)
+	}
+
+	dst := binaryInstallPath()
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(dst), err)
+	}
+	data, err := os.ReadFile(src)
 	if err != nil {
-		return fmt.Errorf("reading binary from %s: %w\nBuild bwop-sync first and ensure it is in your PATH or next to bwop-setup.", src, err)
+		return fmt.Errorf("reading binary: %w", err)
+	}
+	if err := os.WriteFile(dst, data, 0755); err != nil {
+		return fmt.Errorf("writing binary to %s: %w", dst, err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(installPath), 0755); err != nil {
-		return fmt.Errorf("creating %s: %w", filepath.Dir(installPath), err)
-	}
-
-	if err := os.WriteFile(installPath, srcData, 0755); err != nil {
-		return fmt.Errorf("writing to %s: %w\nTry: sudo mkdir -p /usr/local/bin && sudo chown $(whoami) /usr/local/bin", installPath, err)
-	}
-
-	fmt.Printf("✓ Binary installed → %s\n", installPath)
+	fmt.Printf("✓ Binary installed → %s\n", dst)
 	return nil
 }
 
