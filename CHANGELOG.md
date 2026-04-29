@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-04-28
+
+### Fixed
+- Keychain items are now created with the `-A` flag (allow all applications) so the launchd agent can read credentials without triggering a GUI confirmation dialog that can never be acknowledged in a headless context
+
+### Upgrade notes
+Re-run `bwop-sync unlock` after upgrading so the session token is re-stored with the updated ACL.
+
 ## [0.9.0] - 2026-04-28
 
 ### Changed

@@ -12,9 +12,11 @@ const serviceName = "bwop-sync"
 
 // Store saves value under the given account label in the macOS Keychain.
 // Any previous value for the same account is replaced (-U performs an atomic upsert).
+// -A marks the item as accessible by all applications without a confirmation
+// dialog — required so that the launchd agent (headless, no GUI) can read it.
 func Store(account, value string) error {
 	out, err := exec.Command("security", "add-generic-password",
-		"-U", "-s", serviceName, "-a", account, "-w", value).CombinedOutput()
+		"-U", "-A", "-s", serviceName, "-a", account, "-w", value).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("storing %q in keychain: %w\n%s", account, err, out)
 	}
