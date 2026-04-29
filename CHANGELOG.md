@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-04-28
+
+### Tests
+- Added tests for `FindOrCreateVault`, `GetCloudState`, and `PushCloudState` covering: vault found vs. created, state item present vs. absent, field value round-trip, `ListVaults` error propagation, and create vs. edit path selection
+
 ## [0.8.0] - 2026-04-28
 
 ### Added

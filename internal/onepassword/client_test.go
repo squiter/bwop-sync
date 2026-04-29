@@ -243,3 +243,176 @@ func TestWithAccount_emptySkips(t *testing.T) {
 		t.Errorf("expected 'vault list', got: %v", result)
 	}
 }
+
+// --- FindOrCreateVault ---
+
+func TestFindOrCreateVault_returnsExistingVault(t *testing.T) {
+	var calls [][]string
+	c := newWithRunner(captureArgs(`[{"id":"v-meta","name":"bwop-sync-meta"}]`, &calls))
+
+	v, err := c.FindOrCreateVault(MetaVaultName)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.ID != "v-meta" {
+		t.Errorf("expected v-meta, got %q", v.ID)
+	}
+	if len(calls) != 1 {
+		t.Errorf("expected 1 call (only ListVaults), got %d", len(calls))
+	}
+}
+
+func TestFindOrCreateVault_createsWhenMissing(t *testing.T) {
+	call := 0
+	c := newWithRunner(func(name string, args ...string) ([]byte, error) {
+		call++
+		switch call {
+		case 1: // ListVaults — meta vault absent
+			return []byte(`[{"id":"v1","name":"Personal"}]`), nil
+		case 2: // CreateVault
+			return []byte(`{"id":"v-new","name":"bwop-sync-meta"}`), nil
+		}
+		return nil, fmt.Errorf("unexpected call %d", call)
+	})
+
+	v, err := c.FindOrCreateVault(MetaVaultName)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.ID != "v-new" {
+		t.Errorf("expected v-new, got %q", v.ID)
+	}
+	if call != 2 {
+		t.Errorf("expected 2 calls (ListVaults + CreateVault), got %d", call)
+	}
+}
+
+// --- GetCloudState ---
+
+func TestGetCloudState_metaVaultMissing_returnsNil(t *testing.T) {
+	c := newWithRunner(func(name string, args ...string) ([]byte, error) {
+		return []byte(`[{"id":"v1","name":"Personal"}]`), nil
+	})
+	data, err := c.GetCloudState()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if data != nil {
+		t.Errorf("expected nil, got %q", data)
+	}
+}
+
+func TestGetCloudState_stateItemMissing_returnsNil(t *testing.T) {
+	call := 0
+	c := newWithRunner(func(name string, args ...string) ([]byte, error) {
+		call++
+		switch call {
+		case 1: // ListVaults
+			return []byte(`[{"id":"v-meta","name":"bwop-sync-meta"}]`), nil
+		case 2: // ListItems — empty
+			return []byte(`[]`), nil
+		}
+		return nil, fmt.Errorf("unexpected call %d", call)
+	})
+	data, err := c.GetCloudState()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if data != nil {
+		t.Errorf("expected nil, got %q", data)
+	}
+}
+
+func TestGetCloudState_returnsStateFieldValue(t *testing.T) {
+	stateJSON := `{"version":1,"entries":{}}`
+	call := 0
+	c := newWithRunner(func(name string, args ...string) ([]byte, error) {
+		call++
+		switch call {
+		case 1: // ListVaults
+			return []byte(`[{"id":"v-meta","name":"bwop-sync-meta"}]`), nil
+		case 2: // ListItems
+			return []byte(`[{"id":"si1","title":"bwop-sync state","category":"SECURE_NOTE","vault":{"id":"v-meta"}}]`), nil
+		case 3: // GetItem
+			item := fmt.Sprintf(
+				`{"id":"si1","title":"bwop-sync state","category":"SECURE_NOTE","vault":{"id":"v-meta"},"fields":[{"id":"state_data","label":"notesPlain","type":"STRING","purpose":"NOTES","value":%q}]}`,
+				stateJSON,
+			)
+			return []byte(item), nil
+		}
+		return nil, fmt.Errorf("unexpected call %d", call)
+	})
+
+	data, err := c.GetCloudState()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(data) != stateJSON {
+		t.Errorf("expected %q, got %q", stateJSON, data)
+	}
+}
+
+func TestGetCloudState_listVaultsError(t *testing.T) {
+	c := newWithRunner(func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("auth failure")
+	})
+	_, err := c.GetCloudState()
+	if err == nil {
+		t.Fatal("expected error when ListVaults fails")
+	}
+}
+
+// --- PushCloudState ---
+
+func TestPushCloudState_createsItemWhenAbsent(t *testing.T) {
+	call := 0
+	var createArgs []string
+	c := newWithRunner(func(name string, args ...string) ([]byte, error) {
+		call++
+		switch call {
+		case 1: // FindOrCreateVault → ListVaults (meta vault exists)
+			return []byte(`[{"id":"v-meta","name":"bwop-sync-meta"}]`), nil
+		case 2: // ListItems — no state item yet
+			return []byte(`[]`), nil
+		case 3: // CreateItem
+			createArgs = append([]string{name}, args...)
+			return []byte(`{"id":"si1","title":"bwop-sync state","category":"SECURE_NOTE","vault":{"id":"v-meta"}}`), nil
+		}
+		return nil, fmt.Errorf("unexpected call %d", call)
+	})
+
+	if err := c.PushCloudState([]byte(`{"version":1,"entries":{}}`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasArg(createArgs, "create") {
+		t.Errorf("expected 'op item create' call, got: %v", createArgs)
+	}
+}
+
+func TestPushCloudState_editsExistingItem(t *testing.T) {
+	call := 0
+	var editArgs []string
+	c := newWithRunner(func(name string, args ...string) ([]byte, error) {
+		call++
+		switch call {
+		case 1: // FindOrCreateVault → ListVaults
+			return []byte(`[{"id":"v-meta","name":"bwop-sync-meta"}]`), nil
+		case 2: // ListItems — state item present
+			return []byte(`[{"id":"si1","title":"bwop-sync state","category":"SECURE_NOTE","vault":{"id":"v-meta"}}]`), nil
+		case 3: // EditItem
+			editArgs = append([]string{name}, args...)
+			return []byte(`{"id":"si1","title":"bwop-sync state","category":"SECURE_NOTE","vault":{"id":"v-meta"}}`), nil
+		}
+		return nil, fmt.Errorf("unexpected call %d", call)
+	})
+
+	if err := c.PushCloudState([]byte(`{"version":1,"entries":{}}`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasArg(editArgs, "si1") {
+		t.Errorf("expected item ID 'si1' in edit args, got: %v", editArgs)
+	}
+	if !hasArg(editArgs, "edit") {
+		t.Errorf("expected 'op item edit' call, got: %v", editArgs)
+	}
+}
