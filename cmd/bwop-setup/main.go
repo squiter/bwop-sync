@@ -510,6 +510,11 @@ func installLaunchAgent() error {
 		return fmt.Errorf("parsing plist template: %w", err)
 	}
 
+	// Unload any existing agent before writing the new plist — launchctl load
+	// is a no-op on an already-loaded agent, so the binary path would never
+	// update without this step.
+	exec.Command("launchctl", "unload", plistDest).Run() //nolint — not loaded is fine
+
 	f, err := os.OpenFile(plistDest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("creating plist at %s: %w", plistDest, err)
