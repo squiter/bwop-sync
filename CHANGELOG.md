@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-04-29
+
+### Added
+- Log and backup rotation: after every sync run, only the 10 most recent files are kept in `~/.config/bwop-sync/logs/` (per prefix: `dry-run-*.log`, `pre-sync-*.log`, `sync-*.log`) and `~/.config/bwop-sync/backups/` (`bw-*.json`, `op-*.json`). Older files are deleted automatically. The limit is controlled by the `keepFiles` constant (default 10).
+
 ## [0.10.0] - 2026-04-29
 
 ### Fixed

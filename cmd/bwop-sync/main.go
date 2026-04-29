@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +24,9 @@ import (
 
 // version is set at build time via -ldflags "-X main.version=vX.Y.Z".
 var version = "dev"
+
+// keepFiles is the maximum number of log/backup files retained per prefix.
+const keepFiles = 10
 
 // ANSI colour helpers — no external dependency needed on macOS.
 const (
@@ -536,6 +540,7 @@ func executeDryRun(engine *sync.Engine, logDir string) error {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write log: %v\n", err)
 	}
+	pruneFiles(logDir, "dry-run-*.log", keepFiles)
 
 	fmt.Print(sync.FormatReport(report))
 	if logPath != "" {
@@ -556,6 +561,7 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 	} else {
 		fmt.Printf("%s Pre-sync dry-run → %s\n", gray("○"), gray(preDryPath))
 	}
+	pruneFiles(logDir, "pre-sync-*.log", keepFiles)
 
 	engine.Progress = func(action sync.Action, name string, err error) {
 		switch {
@@ -606,6 +612,7 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write sync log: %v\n", err)
 	}
+	pruneFiles(logDir, "sync-*.log", keepFiles)
 
 	if len(report.Passkeys) > 0 {
 		passKeyLogPath := filepath.Join(cfgDir, "passkey-log.json")
@@ -644,6 +651,7 @@ func runBackups(bwClient *bitwarden.Client, opClient *onepassword.Client, cfg *c
 	} else {
 		fmt.Printf("%s Bitwarden backup → %s\n", green("✓"), gray(bwPath))
 	}
+	pruneFiles(backupDir, "bw-*.json", keepFiles)
 
 	opPath := filepath.Join(backupDir, "op-"+ts+".json")
 	if err := backupOnePassword(opClient, cfg, opPath); err != nil {
@@ -651,6 +659,7 @@ func runBackups(bwClient *bitwarden.Client, opClient *onepassword.Client, cfg *c
 	} else {
 		fmt.Printf("%s 1Password backup → %s\n", green("✓"), gray(opPath))
 	}
+	pruneFiles(backupDir, "op-*.json", keepFiles)
 }
 
 // backupOnePassword writes a per-vault item list (titles and IDs, no secrets)
@@ -699,6 +708,20 @@ func uniqueVaultIDs(cfg *config.Config) []string {
 func configDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "bwop-sync")
+}
+
+// pruneFiles deletes the oldest files in dir matching pattern, keeping the
+// newest `keep` files. File names must sort chronologically (e.g. timestamp
+// prefixes) for "oldest" to mean "lowest lexicographic order".
+func pruneFiles(dir, pattern string, keep int) {
+	matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+	if len(matches) <= keep {
+		return
+	}
+	sort.Strings(matches) // oldest first
+	for _, f := range matches[:len(matches)-keep] {
+		os.Remove(f) //nolint — best-effort
+	}
 }
 
 // isInteractive returns true when stdin is a real terminal (character device),
