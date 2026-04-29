@@ -431,10 +431,14 @@ func bwUnlock(password string) (string, error) {
 }
 
 // readSecret reads a line from stdin without echoing characters.
+// stty must receive os.Stdin so it modifies the correct file descriptor.
 func readSecret() (string, error) {
-	// Disable terminal echo via stty.
-	if err := exec.Command("stty", "-echo").Run(); err == nil {
-		defer exec.Command("stty", "echo").Run()
+	off := exec.Command("stty", "-echo")
+	off.Stdin = os.Stdin
+	if err := off.Run(); err == nil {
+		on := exec.Command("stty", "echo")
+		on.Stdin = os.Stdin
+		defer on.Run()
 	}
 	var buf strings.Builder
 	b := make([]byte, 1)
