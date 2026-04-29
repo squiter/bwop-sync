@@ -533,15 +533,18 @@ func installLaunchAgent() error {
 // That directory is user-writable (no sudo) and stable across Go toolchain
 // upgrades, so the launchd plist never breaks.
 func installBinary() error {
-	src, err := exec.LookPath("bwop-sync")
-	if err != nil {
-		// Try the directory next to the running bwop-setup binary.
-		self, _ := os.Executable()
-		src = filepath.Join(filepath.Dir(self), "bwop-sync")
+	// Prefer the binary sitting next to the running bwop-setup (always the
+	// freshly built one). Fall back to PATH only if there is no sibling.
+	self, _ := os.Executable()
+	src := filepath.Join(filepath.Dir(self), "bwop-sync")
+	if _, err := os.Stat(src); err != nil {
+		if found, err := exec.LookPath("bwop-sync"); err == nil {
+			src = found
+		}
 	}
 
 	if _, err := os.Stat(src); err != nil {
-		return fmt.Errorf("bwop-sync binary not found at %s\nBuild it first: go build ./cmd/bwop-sync", src)
+		return fmt.Errorf("bwop-sync binary not found — build it first: go build ./cmd/bwop-sync")
 	}
 
 	dst := binaryInstallPath()
