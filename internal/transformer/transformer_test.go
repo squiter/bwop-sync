@@ -78,7 +78,7 @@ func TestTransform_login_withTOTP(t *testing.T) {
 	}
 }
 
-func TestTransform_passkey_skipped(t *testing.T) {
+func TestTransform_passkeyOnly_skipped(t *testing.T) {
 	item := bitwarden.Item{
 		ID:   "bw-pk",
 		Type: bitwarden.TypeLogin,
@@ -90,10 +90,44 @@ func TestTransform_passkey_skipped(t *testing.T) {
 	result := Transform(item, "vault-1")
 
 	if !result.Skipped {
-		t.Fatal("expected item with passkey to be skipped")
+		t.Fatal("expected passkey-only item to be skipped")
+	}
+	if !result.HasPasskey {
+		t.Error("expected HasPasskey to be true")
 	}
 	if result.OPItem != nil {
 		t.Error("expected OPItem to be nil for skipped item")
+	}
+}
+
+func TestTransform_passkeyWithCredentials_notSkipped(t *testing.T) {
+	item := bitwarden.Item{
+		ID:   "bw-pk",
+		Type: bitwarden.TypeLogin,
+		Name: "Apple ID",
+		Login: &bitwarden.Login{
+			Username: "user@example.com",
+			Password: "s3cr3t",
+			Fido2Credentials: []bitwarden.Fido2Credential{{CredentialID: "cred1"}},
+		},
+	}
+	result := Transform(item, "vault-1")
+
+	if result.Skipped {
+		t.Fatal("expected item with passkey + credentials not to be skipped")
+	}
+	if !result.HasPasskey {
+		t.Error("expected HasPasskey to be true")
+	}
+	if result.OPItem == nil {
+		t.Fatal("expected OPItem to be non-nil")
+	}
+	fieldMap := fieldsByID(result.OPItem.Fields)
+	if fieldMap["username"].Value != "user@example.com" {
+		t.Errorf("unexpected username: %q", fieldMap["username"].Value)
+	}
+	if fieldMap["password"].Value != "s3cr3t" {
+		t.Errorf("unexpected password value")
 	}
 }
 

@@ -17,8 +17,10 @@ Follow these steps exactly:
      ## [X.Y.Z] - YYYY-MM-DD
      ```
      where YYYY-MM-DD is today's date.
-   - Ask the user: "What changed in this release? (brief summary, or press Enter to leave Unreleased empty)"
-     If they provide text, add it as bullet points under the new version heading.
+   - Derive the changelog content yourself — do NOT ask the user:
+     - Run `git log v<last-tag>..HEAD --oneline` to see commits since the last tag.
+     - Run `git diff v<last-tag>..HEAD -- '*.go'` (and `git diff HEAD` for any uncommitted changes) to understand what actually changed in the code.
+     - Write concise bullet points under the new version heading using standard Keep a Changelog sections (Added / Changed / Fixed / Removed). Focus on user-facing behaviour, not internal refactors or test changes.
    - Update the comparison links at the bottom:
      - Change the `[Unreleased]` link to compare `vX.Y.Z...HEAD`
      - Add a new `[X.Y.Z]` link pointing to the release tag

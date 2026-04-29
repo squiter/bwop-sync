@@ -186,14 +186,13 @@ func TestRun_noChanges_skipsUpdate(t *testing.T) {
 	}
 }
 
-func TestRun_passkey_skippedAndLogged(t *testing.T) {
+func TestRun_passkeyOnly_skippedAndLogged(t *testing.T) {
 	op := &fakeOP{}
 	bwItem := bitwarden.Item{
 		ID:   "bw-pk",
 		Type: bitwarden.TypeLogin,
 		Name: "Apple ID",
 		Login: &bitwarden.Login{
-			Username:         "user@apple.com",
 			Fido2Credentials: []bitwarden.Fido2Credential{{CredentialID: "cred1"}},
 		},
 	}
@@ -204,10 +203,39 @@ func TestRun_passkey_skippedAndLogged(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(op.created) != 0 {
-		t.Error("passkey item should not be created in 1Password")
+		t.Error("passkey-only item should not be created in 1Password")
 	}
 	if len(report.Passkeys) != 1 {
 		t.Fatalf("expected 1 passkey entry in report, got %d", len(report.Passkeys))
+	}
+	if report.Passkeys[0].BWID != "bw-pk" {
+		t.Errorf("unexpected passkey BWID: %q", report.Passkeys[0].BWID)
+	}
+}
+
+func TestRun_passkeyWithCredentials_syncedAndLogged(t *testing.T) {
+	op := &fakeOP{}
+	bwItem := bitwarden.Item{
+		ID:   "bw-pk",
+		Type: bitwarden.TypeLogin,
+		Name: "Apple ID",
+		Login: &bitwarden.Login{
+			Username:         "user@apple.com",
+			Password:         "s3cr3t",
+			Fido2Credentials: []bitwarden.Fido2Credential{{CredentialID: "cred1"}},
+		},
+	}
+
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), freshState(), t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(op.created) != 1 {
+		t.Errorf("expected item with passkey + credentials to be created in 1Password, got %d created", len(op.created))
+	}
+	if len(report.Passkeys) != 1 {
+		t.Fatalf("expected passkey to still be logged, got %d entries", len(report.Passkeys))
 	}
 	if report.Passkeys[0].BWID != "bw-pk" {
 		t.Errorf("unexpected passkey BWID: %q", report.Passkeys[0].BWID)

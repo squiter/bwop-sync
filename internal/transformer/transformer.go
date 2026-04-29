@@ -23,6 +23,10 @@ type Result struct {
 	// SkipReason describes why the item was skipped.
 	SkipReason string
 
+	// HasPasskey is true when the item contains a FIDO2 passkey that cannot be
+	// synced. The item itself may still be synced if it has other credentials.
+	HasPasskey bool
+
 	// Hash is a deterministic fingerprint of the BW item's content.
 	// The sync engine stores this to detect future changes.
 	Hash string
@@ -33,10 +37,11 @@ type Result struct {
 func Transform(item bitwarden.Item, opVaultID string) Result {
 	hash := computeHash(item)
 
-	if item.HasPasskey() {
+	if item.HasOnlyPasskey() {
 		return Result{
 			Skipped:    true,
-			SkipReason: "contains passkey (FIDO2 credential) — manual action required",
+			SkipReason: "contains passkey (FIDO2 credential) only — manual action required",
+			HasPasskey: true,
 			Hash:       hash,
 		}
 	}
@@ -59,7 +64,7 @@ func Transform(item bitwarden.Item, opVaultID string) Result {
 		}
 	}
 
-	return Result{OPItem: opItem, Hash: hash}
+	return Result{OPItem: opItem, HasPasskey: item.HasPasskey(), Hash: hash}
 }
 
 func transformLogin(item bitwarden.Item, vaultID string) *onepassword.Item {

@@ -161,6 +161,15 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 
 		result := transformer.Transform(item, vaultID)
 
+		if result.HasPasskey {
+			report.Passkeys = append(report.Passkeys, PasskeyEntry{
+				Name:     item.Name,
+				Username: loginUsername(item),
+				URL:      item.PrimaryURL(),
+				BWID:     item.ID,
+			})
+		}
+
 		if result.Skipped {
 			report.Plans = append(report.Plans, ItemPlan{
 				Action:     ActionSkip,
@@ -169,14 +178,6 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 				SkipReason: result.SkipReason,
 				Hash:       result.Hash,
 			})
-			if item.HasPasskey() {
-				report.Passkeys = append(report.Passkeys, PasskeyEntry{
-					Name:     item.Name,
-					Username: loginUsername(item),
-					URL:      item.PrimaryURL(),
-					BWID:     item.ID,
-				})
-			}
 			e.progress(ActionSkip, item.Name, nil)
 			continue
 		}

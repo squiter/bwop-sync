@@ -62,6 +62,17 @@ func (item *Item) HasPasskey() bool {
 	return item.Login != nil && len(item.Login.Fido2Credentials) > 0
 }
 
+// HasOnlyPasskey returns true when the item contains FIDO2 credentials but no
+// other syncable content (no username, password, TOTP, URIs, notes, or custom fields).
+func (item *Item) HasOnlyPasskey() bool {
+	if !item.HasPasskey() {
+		return false
+	}
+	l := item.Login
+	return l.Username == "" && l.Password == "" && l.TOTP == "" &&
+		len(l.URIs) == 0 && item.Notes == "" && len(item.Fields) == 0
+}
+
 // PrimaryURL returns the first URI associated with a login item, or empty string.
 func (item *Item) PrimaryURL() string {
 	if item.Login == nil || len(item.Login.URIs) == 0 {

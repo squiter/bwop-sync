@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-04-29
+
+### Changed
+- Items that contain a passkey alongside other credentials (username, password, TOTP, URLs, etc.) are now synced to 1Password instead of being skipped entirely. The passkey itself cannot be migrated and is still recorded in `passkey-log.json` for manual action. Only items whose sole content is a passkey are skipped.
+
 ## [0.11.0] - 2026-04-29
 
 ### Added
@@ -167,6 +172,7 @@ Re-run `bwop-setup` and choose to reinstall the LaunchAgent when prompted. It wi
 - GitHub Actions release workflow — triggers on `v*` tags, cross-compiles for darwin/amd64 and darwin/arm64, publishes GitHub Release with binaries and checksums
 - Makefile with `build`, `setup`, `sync`, `dry-run`, `test`, `install`, `clean` targets
 
-[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/squiter/bwop-sync/compare/v0.11.0...v0.12.0
 [0.2.0]: https://github.com/squiter/bwop-sync/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/squiter/bwop-sync/releases/tag/v0.1.0
