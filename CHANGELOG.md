@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-05-06
+
+### Added
+- `bwop-sync passkey-ack` interactive command: lists passkeys that still need to be set up in 1Password (from `passkey-log.json`), lets you select which ones are done, and saves acknowledgements to `passkey-acked.json`. Acknowledged items are excluded from the passkey log on future syncs.
+- Passkey acknowledgements are synced to 1Password (`bwop-sync-meta` vault) so acknowledgements made on one machine are automatically respected on others.
+- Shell completion instructions added to README for fish, zsh, and bash (macOS).
+
+### Fixed
+- `make install` now copies from `bin/` to `~/.local/bin` directly, fixing an issue where `go install` wrote to a different `GOBIN` location under mise and the wrong binary was executed.
+
 ## [0.12.0] - 2026-04-29
 
 ### Changed
@@ -172,7 +182,8 @@ Re-run `bwop-setup` and choose to reinstall the LaunchAgent when prompted. It wi
 - GitHub Actions release workflow — triggers on `v*` tags, cross-compiles for darwin/amd64 and darwin/arm64, publishes GitHub Release with binaries and checksums
 - Makefile with `build`, `setup`, `sync`, `dry-run`, `test`, `install`, `clean` targets
 
-[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/squiter/bwop-sync/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/squiter/bwop-sync/compare/v0.11.0...v0.12.0
 [0.2.0]: https://github.com/squiter/bwop-sync/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/squiter/bwop-sync/releases/tag/v0.1.0
