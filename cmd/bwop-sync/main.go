@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,7 +56,7 @@ func main() {
 		SilenceUsage: true,
 	}
 
-	root.AddCommand(syncCmd(), recoverCmd(), backfillCmd(), grantAccessCmd(), unlockCmd(), versionCmd())
+	root.AddCommand(syncCmd(), recoverCmd(), backfillCmd(), grantAccessCmd(), unlockCmd(), versionCmd(), passkeyAckCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -521,7 +523,7 @@ func runSync(dryRun bool) error {
 	engine := sync.New(bwClient, opClient, cfg, st, logDir)
 
 	if dryRun {
-		return executeDryRun(engine, logDir)
+		return executeDryRun(engine, st, cfgDir, logDir, opClient)
 	}
 
 	backupDir := filepath.Join(cfgDir, "backups")
@@ -530,11 +532,15 @@ func runSync(dryRun bool) error {
 	return executeSync(engine, st, statePath, logDir, cfgDir, opClient)
 }
 
-func executeDryRun(engine *sync.Engine, logDir string) error {
+func executeDryRun(engine *sync.Engine, st *state.State, cfgDir, logDir string, opClient *onepassword.Client) error {
 	report, err := engine.Run(true)
 	if err != nil {
 		return err
 	}
+
+	ackedPath := filepath.Join(cfgDir, "passkey-acked.json")
+	syncCloudAckedPasskeys(ackedPath, opClient)
+	report.Passkeys, _ = filterSyncedPasskeys(report.Passkeys, st, opClient, ackedPath)
 
 	logPath, err := sync.WriteLog(report, logDir, "dry-run")
 	if err != nil {
@@ -545,6 +551,209 @@ func executeDryRun(engine *sync.Engine, logDir string) error {
 	fmt.Print(sync.FormatReport(report))
 	if logPath != "" {
 		fmt.Printf("\nLog written to: %s\n", logPath)
+	}
+	return nil
+}
+
+// filterSyncedPasskeys removes entries whose BW item ID is in passkey-acked.json,
+// and as a future-proof bonus also drops any entry whose 1P item exposes a
+// passkey field via the CLI (the current CLI does not expose passkey data, but
+// this check costs nothing and works if that ever changes).
+// Returns the remaining entries and the number that were filtered out.
+func filterSyncedPasskeys(entries []sync.PasskeyEntry, st *state.State, opClient *onepassword.Client, ackedPath string) (remaining []sync.PasskeyEntry, ackedCount int) {
+	acked := loadAckedPasskeys(ackedPath)
+	for _, entry := range entries {
+		if acked[entry.BWID] {
+			ackedCount++
+			continue
+		}
+		if stEntry, ok := st.Get(entry.BWID); ok {
+			if opItem, err := opClient.GetItem(stEntry.OPID, entry.OPVaultID); err == nil && opItem.HasPasskey() {
+				ackedCount++
+				continue
+			}
+		}
+		remaining = append(remaining, entry)
+	}
+	return remaining, ackedCount
+}
+
+// loadAckedPasskeys reads the acknowledged-passkeys file and returns a set of BW item IDs.
+func loadAckedPasskeys(path string) map[string]bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]bool{}
+	}
+	var ids []string
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return map[string]bool{}
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
+// saveAckedPasskeys writes the set of acknowledged BW item IDs to disk.
+func saveAckedPasskeys(path string, ids map[string]bool) error {
+	list := make([]string, 0, len(ids))
+	for id := range ids {
+		list = append(list, id)
+	}
+	sort.Strings(list)
+	data, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+// marshalAckedPasskeys serialises a set of acknowledged BW IDs to JSON.
+func marshalAckedPasskeys(ids map[string]bool) []byte {
+	list := make([]string, 0, len(ids))
+	for id := range ids {
+		list = append(list, id)
+	}
+	sort.Strings(list)
+	data, _ := json.MarshalIndent(list, "", "  ")
+	return data
+}
+
+// syncCloudAckedPasskeys pulls the passkey-acked list from 1Password, merges it
+// with the local file, and saves the result locally. This ensures the local file
+// always reflects acknowledgements made on other machines.
+func syncCloudAckedPasskeys(ackedPath string, opClient *onepassword.Client) {
+	data, err := opClient.GetCloudPasskeyAcked()
+	if err != nil || data == nil {
+		return
+	}
+	var cloudIDs []string
+	if err := json.Unmarshal(data, &cloudIDs); err != nil {
+		return
+	}
+	local := loadAckedPasskeys(ackedPath)
+	for _, id := range cloudIDs {
+		local[id] = true
+	}
+	saveAckedPasskeys(ackedPath, local) //nolint — best-effort
+}
+
+// pushAckedPasskeysToCloud uploads the local passkey-acked list to 1Password.
+func pushAckedPasskeysToCloud(ackedPath string, opClient *onepassword.Client) error {
+	acked := loadAckedPasskeys(ackedPath)
+	return opClient.PushCloudPasskeyAcked(marshalAckedPasskeys(acked))
+}
+
+func passkeyAckCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "passkey-ack",
+		Short: "Mark passkeys as set up in 1Password",
+		Long: `Shows the list of items whose passkeys still need to be added to 1Password,
+and lets you select the ones you have already set up. Selected items are saved
+to passkey-acked.json and excluded from the passkey log on future syncs.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPasskeyAck()
+		},
+	}
+}
+
+func runPasskeyAck() error {
+	cfgDir := configDir()
+	logPath := filepath.Join(cfgDir, "passkey-log.json")
+	ackedPath := filepath.Join(cfgDir, "passkey-acked.json")
+
+	opToken, _ := keychain.Read(keychain.AccountOPToken)
+	opAccount, _ := keychain.Read(keychain.AccountOPAccount)
+	var opClient *onepassword.Client
+	if opToken == "" {
+		opClient = onepassword.NewFromEnv(opAccount)
+	} else {
+		opClient = onepassword.New(opToken)
+	}
+
+	// Pull cloud acked list and merge with local before showing the menu.
+	syncCloudAckedPasskeys(ackedPath, opClient)
+
+	log, err := sync.ReadPasskeyLog(logPath)
+	if err != nil {
+		return fmt.Errorf("reading passkey log: %w", err)
+	}
+
+	acked := loadAckedPasskeys(ackedPath)
+
+	// Only show entries not yet acknowledged.
+	var pending []sync.PasskeyEntry
+	for _, e := range log.Passkeys {
+		if !acked[e.BWID] {
+			pending = append(pending, e)
+		}
+	}
+
+	if len(pending) == 0 {
+		fmt.Println("No passkeys pending — all items are already acknowledged.")
+		return nil
+	}
+
+	fmt.Printf("\nPasskeys that still need to be set up in 1Password (%d):\n\n", len(pending))
+	for i, e := range pending {
+		user := e.Username
+		if user == "" {
+			user = "—"
+		}
+		fmt.Printf("  %d) %s  (%s)\n", i+1, e.Name, user)
+	}
+
+	fmt.Println()
+	fmt.Print("Enter the numbers of items you have already set up (e.g. 1 3), or 'all': ")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	input := strings.TrimSpace(scanner.Text())
+
+	if input == "" {
+		fmt.Println("Nothing selected.")
+		return nil
+	}
+
+	var selected []sync.PasskeyEntry
+	if strings.ToLower(input) == "all" {
+		selected = pending
+	} else {
+		// Accept space- or comma-separated numbers.
+		raw := strings.FieldsFunc(input, func(r rune) bool { return r == ' ' || r == ',' })
+		seen := map[int]bool{}
+		for _, tok := range raw {
+			n, err := strconv.Atoi(strings.TrimSpace(tok))
+			if err != nil || n < 1 || n > len(pending) {
+				return fmt.Errorf("invalid selection %q — enter numbers between 1 and %d", tok, len(pending))
+			}
+			if !seen[n] {
+				seen[n] = true
+				selected = append(selected, pending[n-1])
+			}
+		}
+	}
+
+	for _, e := range selected {
+		acked[e.BWID] = true
+	}
+	if err := saveAckedPasskeys(ackedPath, acked); err != nil {
+		return fmt.Errorf("saving acknowledged passkeys: %w", err)
+	}
+
+	if pushErr := pushAckedPasskeysToCloud(ackedPath, opClient); pushErr != nil {
+		fmt.Fprintf(os.Stderr, "%s could not sync passkey-acked to 1Password: %v\n", yellow("⚠"), pushErr)
+	} else {
+		fmt.Printf("%s Passkey acknowledgements synced to 1Password (%s)\n", green("✓"), gray(onepassword.MetaVaultName))
+	}
+
+	fmt.Printf("%s %d passkey(s) acknowledged — won't appear in future sync logs\n", green("✓"), len(selected))
+	if len(selected) < len(pending) {
+		fmt.Printf("   %d item(s) still pending\n", len(pending)-len(selected))
 	}
 	return nil
 }
@@ -608,19 +817,30 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 		return runErr
 	}
 
+	ackedPath := filepath.Join(cfgDir, "passkey-acked.json")
+	syncCloudAckedPasskeys(ackedPath, opClient)
+	var ackedPasskeys int
+	report.Passkeys, ackedPasskeys = filterSyncedPasskeys(report.Passkeys, st, opClient, ackedPath)
+
 	syncLogPath, err := sync.WriteLog(report, logDir, "sync")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write sync log: %v\n", err)
 	}
 	pruneFiles(logDir, "sync-*.log", keepFiles)
 
+	passKeyLogPath := filepath.Join(cfgDir, "passkey-log.json")
 	if len(report.Passkeys) > 0 {
-		passKeyLogPath := filepath.Join(cfgDir, "passkey-log.json")
 		if err := sync.WritePasskeyLog(report.Passkeys, passKeyLogPath); err != nil {
 			fmt.Fprintf(os.Stderr, "%s could not write passkey log: %v\n", yellow("⚠"), err)
 		} else {
 			fmt.Printf("%s %d passkey(s) require manual action — %s\n", yellow("⚠"), len(report.Passkeys), gray(passKeyLogPath))
+			fmt.Printf("   After setting up each passkey in 1Password, run: bwop-sync passkey-ack <bw-id>\n")
 		}
+	} else if err := os.Remove(passKeyLogPath); err == nil {
+		fmt.Printf("%s All passkeys are set up in 1Password — passkey log cleared\n", green("✓"))
+	}
+	if ackedPasskeys > 0 {
+		fmt.Printf("%s %d passkey(s) already set up in 1Password\n", green("✓"), ackedPasskeys)
 	}
 
 	fmt.Println(bold(report.Summary()))

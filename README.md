@@ -79,6 +79,38 @@ bwop-sync version
 
 See the [Building from source](#building-from-source) section below.
 
+### Shell completion
+
+`bwop-sync` can generate tab-completion scripts for bash, zsh, and fish.
+
+#### fish (macOS / Linux)
+
+```fish
+bwop-sync completion fish > ~/.config/fish/completions/bwop-sync.fish
+```
+
+#### zsh (macOS)
+
+```zsh
+bwop-sync completion zsh > $(brew --prefix)/share/zsh/site-functions/_bwop-sync
+```
+
+If completion is not yet enabled in your shell, add this once to `~/.zshrc`:
+
+```zsh
+echo "autoload -U compinit; compinit" >> ~/.zshrc
+```
+
+#### bash (macOS)
+
+Requires the `bash-completion` package (`brew install bash-completion`):
+
+```bash
+bwop-sync completion bash > $(brew --prefix)/etc/bash_completion.d/bwop-sync
+```
+
+Open a new shell for the changes to take effect.
+
 ---
 
 ## Setup (first time only)

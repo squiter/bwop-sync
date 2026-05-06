@@ -85,10 +85,11 @@ type Report struct {
 
 // PasskeyEntry is a skipped item that holds a passkey. Written to the passkey log.
 type PasskeyEntry struct {
-	Name     string `json:"name"`
-	Username string `json:"username"`
-	URL      string `json:"url"`
-	BWID     string `json:"bw_id"`
+	Name      string `json:"name"`
+	Username  string `json:"username"`
+	URL       string `json:"url"`
+	BWID      string `json:"bw_id"`
+	OPVaultID string `json:"op_vault_id,omitempty"`
 }
 
 // Summary returns a human-readable one-liner for display and logging.
@@ -163,10 +164,11 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 
 		if result.HasPasskey {
 			report.Passkeys = append(report.Passkeys, PasskeyEntry{
-				Name:     item.Name,
-				Username: loginUsername(item),
-				URL:      item.PrimaryURL(),
-				BWID:     item.ID,
+				Name:      item.Name,
+				Username:  loginUsername(item),
+				URL:       item.PrimaryURL(),
+				BWID:      item.ID,
+				OPVaultID: vaultID,
 			})
 		}
 
@@ -312,6 +314,12 @@ func WriteLog(r *Report, logDir, prefix string) (string, error) {
 	return path, nil
 }
 
+// PasskeyLog is the structure written to and read from passkey-log.json.
+type PasskeyLog struct {
+	GeneratedAt string         `json:"generated_at"`
+	Passkeys    []PasskeyEntry `json:"passkeys"`
+}
+
 // WritePasskeyLog writes passkey entries to the passkey log JSON file.
 func WritePasskeyLog(entries []PasskeyEntry, path string) error {
 	if len(entries) == 0 {
@@ -321,11 +329,7 @@ func WritePasskeyLog(entries []PasskeyEntry, path string) error {
 		return fmt.Errorf("creating passkey log directory: %w", err)
 	}
 
-	type logFile struct {
-		GeneratedAt string         `json:"generated_at"`
-		Passkeys    []PasskeyEntry `json:"passkeys"`
-	}
-	log := logFile{
+	log := PasskeyLog{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Passkeys:    entries,
 	}
@@ -334,6 +338,23 @@ func WritePasskeyLog(entries []PasskeyEntry, path string) error {
 		return fmt.Errorf("marshaling passkey log: %w", err)
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+// ReadPasskeyLog reads the passkey log JSON file. Returns an empty log (no error)
+// when the file does not exist.
+func ReadPasskeyLog(path string) (*PasskeyLog, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return &PasskeyLog{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading passkey log: %w", err)
+	}
+	var log PasskeyLog
+	if err := json.Unmarshal(data, &log); err != nil {
+		return nil, fmt.Errorf("parsing passkey log: %w", err)
+	}
+	return &log, nil
 }
 
 // createWithRetry calls CreateItem, retrying on rate-limit errors with

@@ -1,5 +1,7 @@
 package onepassword
 
+import "strings"
+
 // Category is the 1Password item category identifier.
 type Category string
 
@@ -9,6 +11,7 @@ const (
 	CategoryCreditCard Category = "CREDIT_CARD"
 	CategoryIdentity   Category = "IDENTITY"
 	CategorySSHKey     Category = "SSH_KEY"
+	CategoryPasskey    Category = "PASSKEY"
 )
 
 // FieldType is the 1Password field type identifier.
@@ -94,4 +97,19 @@ type AccountInfo struct {
 	Email     string `json:"email"`
 	UserUUID  string `json:"user_uuid"`
 	Shorthand string `json:"shorthand"`
+}
+
+// HasPasskey reports whether the item contains a passkey credential.
+// 1Password stores passkeys either as dedicated PASSKEY-category items or as
+// fields grouped in a section labelled "Passkey" inside an existing LOGIN item.
+func (item *Item) HasPasskey() bool {
+	if item.Category == CategoryPasskey {
+		return true
+	}
+	for _, f := range item.Fields {
+		if f.Section != nil && strings.EqualFold(f.Section.Label, "passkey") {
+			return true
+		}
+	}
+	return false
 }
