@@ -29,6 +29,17 @@ func realRun(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).Output()
 }
 
+// Sync forces the bw CLI to pull the latest vault state from the server.
+// The CLI keeps a local cache, so without this `bw list items` returns stale
+// data — recent changes made in another client (web, desktop, mobile) would
+// not propagate to 1Password until the cache happens to refresh.
+func (c *Client) Sync() error {
+	if _, err := c.run("bw", "sync", "--session", c.session); err != nil {
+		return fmt.Errorf("bw sync: %w", err)
+	}
+	return nil
+}
+
 // ListItems returns all vault items accessible to the current session.
 // Both personal and organisation items are included.
 func (c *Client) ListItems() ([]Item, error) {

@@ -522,6 +522,8 @@ func runSync(dryRun bool) error {
 
 	engine := sync.New(bwClient, opClient, cfg, st, logDir)
 
+	refreshBitwardenCache(bwClient)
+
 	if dryRun {
 		return executeDryRun(engine, st, cfgDir, logDir, opClient)
 	}
@@ -530,6 +532,18 @@ func runSync(dryRun bool) error {
 	runBackups(bwClient, opClient, cfg, backupDir)
 
 	return executeSync(engine, st, statePath, logDir, cfgDir, opClient)
+}
+
+// refreshBitwardenCache forces `bw sync` so the local CLI cache reflects the
+// latest server state. Without this, items recently edited in another bw client
+// (web, desktop, mobile) would not be picked up. Failures are non-fatal — same
+// pattern as backups: warn and continue.
+func refreshBitwardenCache(bwClient *bitwarden.Client) {
+	if err := bwClient.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s Bitwarden cache refresh failed: %v\n", yellow("⚠"), err)
+		return
+	}
+	fmt.Printf("%s Bitwarden cache refreshed\n", green("✓"))
 }
 
 func executeDryRun(engine *sync.Engine, st *state.State, cfgDir, logDir string, opClient *onepassword.Client) error {

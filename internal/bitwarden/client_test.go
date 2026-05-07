@@ -72,6 +72,37 @@ func TestListCollections_success(t *testing.T) {
 	}
 }
 
+func TestSync_success(t *testing.T) {
+	var gotArgs []string
+	c := newWithRunner("test-session", func(name string, args ...string) ([]byte, error) {
+		gotArgs = append([]string{name}, args...)
+		return []byte("Syncing complete."), nil
+	})
+
+	if err := c.Sync(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"bw", "sync", "--session", "test-session"}
+	if len(gotArgs) != len(want) {
+		t.Fatalf("expected %d args, got %d: %v", len(want), len(gotArgs), gotArgs)
+	}
+	for i := range want {
+		if gotArgs[i] != want[i] {
+			t.Errorf("arg %d: expected %q, got %q", i, want[i], gotArgs[i])
+		}
+	}
+}
+
+func TestSync_cliError(t *testing.T) {
+	c := newWithRunner("bad-session", func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("exit status 1")
+	})
+	if err := c.Sync(); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
 func TestIsSessionValid_unlocked(t *testing.T) {
 	c := newWithRunner("test-session", func(name string, args ...string) ([]byte, error) {
 		return []byte(`{"status":"unlocked"}`), nil
