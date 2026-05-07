@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-05-07
+
+### Fixed
+- Bitwarden cache staleness: `bwop-sync sync` (and `--dry-run`) now runs `bw sync` before listing items so changes made in another Bitwarden client (web, desktop, mobile) are picked up. Previously the local `bw` CLI cache could return stale data, causing recently edited items (e.g. a rotated password) to be silently missed by sync. The pre-sync backup also benefits from the fresh state. Cache refresh failures are non-fatal — a warning is printed and the run continues.
+
 ## [0.12.1] - 2026-05-06
 
 ### Added
@@ -182,7 +187,8 @@ Re-run `bwop-setup` and choose to reinstall the LaunchAgent when prompted. It wi
 - GitHub Actions release workflow — triggers on `v*` tags, cross-compiles for darwin/amd64 and darwin/arm64, publishes GitHub Release with binaries and checksums
 - Makefile with `build`, `setup`, `sync`, `dry-run`, `test`, `install`, `clean` targets
 
-[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/squiter/bwop-sync/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/squiter/bwop-sync/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/squiter/bwop-sync/compare/v0.11.0...v0.12.0
 [0.2.0]: https://github.com/squiter/bwop-sync/compare/v0.1.0...v0.2.0
