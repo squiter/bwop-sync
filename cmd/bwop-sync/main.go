@@ -520,6 +520,8 @@ func runSync(dryRun bool) error {
 		}
 	}
 
+	reconcileVaultNames(cfg, opClient, config.DefaultPath())
+
 	engine := sync.New(bwClient, opClient, cfg, st, logDir)
 
 	refreshBitwardenCache(bwClient)
@@ -866,6 +868,35 @@ func executeSync(engine *sync.Engine, st *state.State, statePath, logDir, cfgDir
 		return fmt.Errorf(red("%d error(s) occurred during sync — check the log for details"), len(report.Errors))
 	}
 	return nil
+}
+
+// reconcileVaultNames detects when a 1Password vault has been renamed since
+// the mapping was created and updates mapping.json to match. Operates on vault
+// IDs (which are stable across renames) and is non-fatal: any failure prints a
+// warning and the sync proceeds.
+func reconcileVaultNames(cfg *config.Config, opClient *onepassword.Client, cfgPath string) {
+	vaults, err := opClient.ListVaults()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s could not check vault names: %v\n", yellow("⚠"), err)
+		return
+	}
+	nameByID := make(map[string]string, len(vaults))
+	for _, v := range vaults {
+		nameByID[v.ID] = v.Name
+	}
+	changes := cfg.ReconcileVaultNames(nameByID)
+	if len(changes) == 0 {
+		return
+	}
+	for _, ch := range changes {
+		fmt.Printf("%s vault renamed in 1Password: %s → %s %s\n",
+			cyan("ℹ"), gray(ch.OldName), green(ch.NewName), gray("("+ch.VaultID+")"))
+	}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "%s could not save mapping.json: %v\n", yellow("⚠"), err)
+		return
+	}
+	fmt.Printf("%s mapping.json updated\n", green("✓"))
 }
 
 // runBackups exports a plaintext BW vault snapshot and a 1P structural snapshot

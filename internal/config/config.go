@@ -69,3 +69,33 @@ func (c *Config) OPVaultForCollection(bwCollectionID string) (string, bool) {
 	}
 	return "", false
 }
+
+// VaultRename describes a 1Password vault whose name has changed since the
+// mapping was last saved.
+type VaultRename struct {
+	VaultID string
+	OldName string
+	NewName string
+}
+
+// ReconcileVaultNames updates each mapping's OPVaultName to match the current
+// name reported by 1Password (nameByID is a vault ID → current name lookup).
+// Mappings whose vault ID is not in nameByID are left unchanged so a transient
+// permission/listing gap cannot wipe out names. Returns the list of renames
+// detected; the caller is responsible for persisting the updated config.
+func (c *Config) ReconcileVaultNames(nameByID map[string]string) []VaultRename {
+	var changes []VaultRename
+	for i, m := range c.Mappings {
+		current, ok := nameByID[m.OPVaultID]
+		if !ok || current == m.OPVaultName {
+			continue
+		}
+		changes = append(changes, VaultRename{
+			VaultID: m.OPVaultID,
+			OldName: m.OPVaultName,
+			NewName: current,
+		})
+		c.Mappings[i].OPVaultName = current
+	}
+	return changes
+}

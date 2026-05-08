@@ -63,6 +63,64 @@ func TestOPVaultForCollection_notFound(t *testing.T) {
 	}
 }
 
+func TestReconcileVaultNames_detectsAndUpdatesRenames(t *testing.T) {
+	cfg := &Config{
+		Mappings: []VaultMapping{
+			{BWCollectionID: "personal", OPVaultID: "v1", OPVaultName: "Personal"},
+			{BWCollectionID: "col-work", OPVaultID: "v2", OPVaultName: "Work"},
+			{BWCollectionID: "col-home", OPVaultID: "v3", OPVaultName: "Home"},
+		},
+	}
+	nameByID := map[string]string{
+		"v1": "Personal",     // unchanged
+		"v2": "Work Account", // renamed
+		"v3": "Home",         // unchanged
+	}
+
+	changes := cfg.ReconcileVaultNames(nameByID)
+
+	if len(changes) != 1 {
+		t.Fatalf("expected 1 rename, got %d", len(changes))
+	}
+	if changes[0].VaultID != "v2" || changes[0].OldName != "Work" || changes[0].NewName != "Work Account" {
+		t.Errorf("unexpected change: %+v", changes[0])
+	}
+	if cfg.Mappings[1].OPVaultName != "Work Account" {
+		t.Errorf("mapping not updated, got %q", cfg.Mappings[1].OPVaultName)
+	}
+	if cfg.Mappings[0].OPVaultName != "Personal" || cfg.Mappings[2].OPVaultName != "Home" {
+		t.Error("untouched mappings should be left alone")
+	}
+}
+
+func TestReconcileVaultNames_noChanges(t *testing.T) {
+	cfg := &Config{
+		Mappings: []VaultMapping{
+			{BWCollectionID: "personal", OPVaultID: "v1", OPVaultName: "Personal"},
+		},
+	}
+	changes := cfg.ReconcileVaultNames(map[string]string{"v1": "Personal"})
+	if len(changes) != 0 {
+		t.Errorf("expected no changes, got %+v", changes)
+	}
+}
+
+func TestReconcileVaultNames_missingVaultLeftAlone(t *testing.T) {
+	cfg := &Config{
+		Mappings: []VaultMapping{
+			{BWCollectionID: "personal", OPVaultID: "v1", OPVaultName: "Personal"},
+		},
+	}
+	// Simulate a transient listing gap: v1 is not in the map at all.
+	changes := cfg.ReconcileVaultNames(map[string]string{})
+	if len(changes) != 0 {
+		t.Errorf("expected no changes for missing vault, got %+v", changes)
+	}
+	if cfg.Mappings[0].OPVaultName != "Personal" {
+		t.Errorf("name should not be cleared when vault is absent, got %q", cfg.Mappings[0].OPVaultName)
+	}
+}
+
 func TestLoad_fileNotFound(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "no-such-config.json"))
 	if err == nil {
