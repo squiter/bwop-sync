@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-05-08
+
+### Added
+- Vault rename detection: at the start of every `bwop-sync sync` (and `--dry-run`), the names in `mapping.json` are reconciled against the current names reported by 1Password. When a mapped vault has been renamed in 1Password, the change is logged and `mapping.json` is updated automatically. Vault IDs (which are stable across renames) remain the source of truth for sync — the name field is purely for display, but it now stays accurate without re-running `bwop-setup`.
+
 ## [0.13.0] - 2026-05-07
 
 ### Fixed
@@ -187,7 +192,8 @@ Re-run `bwop-setup` and choose to reinstall the LaunchAgent when prompted. It wi
 - GitHub Actions release workflow — triggers on `v*` tags, cross-compiles for darwin/amd64 and darwin/arm64, publishes GitHub Release with binaries and checksums
 - Makefile with `build`, `setup`, `sync`, `dry-run`, `test`, `install`, `clean` targets
 
-[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/squiter/bwop-sync/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/squiter/bwop-sync/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/squiter/bwop-sync/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/squiter/bwop-sync/compare/v0.11.0...v0.12.0
