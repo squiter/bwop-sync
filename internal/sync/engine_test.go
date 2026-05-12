@@ -3,6 +3,8 @@ package sync
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,22 +13,59 @@ import (
 	"github.com/squiter/bwop-sync/internal/config"
 	"github.com/squiter/bwop-sync/internal/onepassword"
 	"github.com/squiter/bwop-sync/internal/state"
+	"github.com/squiter/bwop-sync/internal/transformer"
 )
 
 // fakeBW implements BWClient for tests.
 type fakeBW struct {
-	items []bitwarden.Item
-	err   error
+	items       []bitwarden.Item
+	err         error
+	downloads   []string // attachment IDs requested
+	downloadErr error
 }
 
 func (f *fakeBW) ListItems() ([]bitwarden.Item, error) { return f.items, f.err }
 
+func (f *fakeBW) DownloadAttachment(itemID, attachmentID, outDir string) error {
+	f.downloads = append(f.downloads, attachmentID)
+	if f.downloadErr != nil {
+		return f.downloadErr
+	}
+	// Real bw writes the file with its native filename into the supplied
+	// directory; the fake mimics that so the engine's post-download os.Stat
+	// finds <outDir>/<FileName>.
+	fileName := "fake-" + attachmentID
+	for _, it := range f.items {
+		if it.ID != itemID {
+			continue
+		}
+		for _, a := range it.Attachments {
+			if a.ID == attachmentID {
+				fileName = a.FileName
+				break
+			}
+		}
+	}
+	return os.WriteFile(filepath.Join(outDir, fileName), []byte("dummy-"+attachmentID), 0600)
+}
+
+// fakeAttachOp records one AttachFile/DeleteFile call.
+type fakeAttachOp struct {
+	OPID    string
+	VaultID string
+	Label   string
+	Path    string
+	Action  string // "attach" or "delete"
+}
+
 // fakeOP implements OPClient for tests.
 type fakeOP struct {
-	created    []onepassword.Item
-	edited     []onepassword.Item
-	failOn     string // "create", "edit", or "ratelimit"
-	createCap  int    // stop returning success after this many creates (0 = unlimited)
+	created     []onepassword.Item
+	edited      []onepassword.Item
+	attachments []fakeAttachOp
+	failOn      string // "create", "edit", "ratelimit", "attach", "delete"
+	createCap   int    // stop returning success after this many creates (0 = unlimited)
+	attachCap   int    // stop returning success after this many attaches (0 = unlimited)
 }
 
 func (f *fakeOP) CreateItem(item onepassword.Item) (*onepassword.Item, error) {
@@ -51,6 +90,39 @@ func (f *fakeOP) EditItem(opID string, item onepassword.Item) (*onepassword.Item
 	item.ID = opID
 	f.edited = append(f.edited, item)
 	return &item, nil
+}
+
+func (f *fakeOP) AttachFile(opID, vaultID, label, path string) error {
+	if f.failOn == "attach" {
+		return fmt.Errorf("injected attach error")
+	}
+	if f.attachCap > 0 && countAction(f.attachments, "attach") >= f.attachCap {
+		return fmt.Errorf("Too many requests")
+	}
+	f.attachments = append(f.attachments, fakeAttachOp{
+		OPID: opID, VaultID: vaultID, Label: label, Path: path, Action: "attach",
+	})
+	return nil
+}
+
+func (f *fakeOP) DeleteFile(opID, vaultID, fieldRef string) error {
+	if f.failOn == "delete" {
+		return fmt.Errorf("injected delete error")
+	}
+	f.attachments = append(f.attachments, fakeAttachOp{
+		OPID: opID, VaultID: vaultID, Label: fieldRef, Action: "delete",
+	})
+	return nil
+}
+
+func countAction(ops []fakeAttachOp, action string) int {
+	n := 0
+	for _, o := range ops {
+		if o.Action == action {
+			n++
+		}
+	}
+	return n
 }
 
 // noSleep replaces time.Sleep in tests so rate-limit retry loops complete instantly.
@@ -368,6 +440,262 @@ func TestRun_rateLimitExhausted_abortsAndSavesProgress(t *testing.T) {
 	if report.RemainingItems == 0 {
 		t.Error("expected RemainingItems > 0 on rate-limit abort")
 	}
+}
+
+// --- Attachment sync ---
+
+func loginWithAttachments(id, name string, atts []bitwarden.Attachment) bitwarden.Item {
+	item := loginItem(id, name, "user", "pass")
+	item.Attachments = atts
+	return item
+}
+
+func TestRun_create_uploadsAttachments(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	bw := &fakeBW{items: []bitwarden.Item{
+		loginWithAttachments("bw-1", "Notes", []bitwarden.Attachment{
+			{ID: "att-1", FileName: "doc.pdf", Size: "1024"},
+			{ID: "att-2", FileName: "image.png", Size: "2048"},
+		}),
+	}}
+
+	engine := newTestEngine(bw, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(op.created) != 1 {
+		t.Fatalf("expected 1 created item, got %d", len(op.created))
+	}
+	if got := countAction(op.attachments, "attach"); got != 2 {
+		t.Errorf("expected 2 attach calls, got %d", got)
+	}
+	if len(bw.downloads) != 2 {
+		t.Errorf("expected 2 attachment downloads, got %d", len(bw.downloads))
+	}
+
+	entry, _ := st.Get("bw-1")
+	if len(entry.Attachments) != 2 {
+		t.Errorf("state should record 2 attachments, got %d", len(entry.Attachments))
+	}
+
+	if len(report.Plans) != 1 || len(report.Plans[0].Attachments) != 2 {
+		t.Errorf("expected create plan with 2 attachments, got %+v", report.Plans)
+	}
+}
+
+func TestRun_update_addsNewAttachmentOnly(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	item := loginWithAttachments("bw-1", "Notes", []bitwarden.Attachment{
+		{ID: "att-1", FileName: "doc.pdf", Size: "1024"},
+		{ID: "att-2", FileName: "extra.png", Size: "2048"},
+	})
+	// Seed state as if only att-1 was previously uploaded; hash matches so the
+	// item itself does not need re-syncing — attachment-only update path.
+	hash := transformerHash(t, item)
+	st.Set("bw-1", "op-existing", hash)
+	st.SetAttachments("bw-1", []state.Attachment{
+		{BWID: "att-1", FileName: "doc.pdf", Size: "1024", OPLabel: "doc.pdf"},
+	})
+
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{item}}, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(op.edited) != 0 {
+		t.Errorf("attachment-only update must not re-edit item fields; got %d edits", len(op.edited))
+	}
+	if got := countAction(op.attachments, "attach"); got != 1 {
+		t.Fatalf("expected 1 attach call, got %d", got)
+	}
+	if op.attachments[0].Label != "extra_png" {
+		t.Errorf("expected sanitized label 'extra_png', got %q", op.attachments[0].Label)
+	}
+	if len(report.Plans) != 1 || report.Plans[0].Action != ActionUpdate {
+		t.Errorf("expected single UPDATE plan, got %+v", report.Plans)
+	}
+}
+
+func TestRun_update_removesAttachmentDeletedInBW(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	item := loginWithAttachments("bw-1", "Notes", nil) // BW has no attachments
+	hash := transformerHash(t, item)
+	st.Set("bw-1", "op-existing", hash)
+	st.SetAttachments("bw-1", []state.Attachment{
+		{BWID: "att-1", FileName: "doc.pdf", Size: "1024", OPLabel: "doc.pdf"},
+	})
+
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{item}}, op, personalConfig(), st, t.TempDir())
+	if _, err := engine.Run(false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := countAction(op.attachments, "delete"); got != 1 {
+		t.Fatalf("expected 1 delete call, got %d", got)
+	}
+	if op.attachments[0].Label != "doc.pdf" {
+		t.Errorf("expected delete label 'doc.pdf', got %q", op.attachments[0].Label)
+	}
+	entry, _ := st.Get("bw-1")
+	if len(entry.Attachments) != 0 {
+		t.Errorf("state should have no attachments after removal, got %d", len(entry.Attachments))
+	}
+}
+
+func TestRun_attachmentUnchanged_noOps(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	item := loginWithAttachments("bw-1", "Notes", []bitwarden.Attachment{
+		{ID: "att-1", FileName: "doc.pdf", Size: "1024"},
+	})
+	hash := transformerHash(t, item)
+	st.Set("bw-1", "op-existing", hash)
+	st.SetAttachments("bw-1", []state.Attachment{
+		{BWID: "att-1", FileName: "doc.pdf", Size: "1024", OPLabel: "doc.pdf"},
+	})
+
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{item}}, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(op.created)+len(op.edited)+len(op.attachments) != 0 {
+		t.Errorf("expected no op writes, got create=%d edit=%d att=%d",
+			len(op.created), len(op.edited), len(op.attachments))
+	}
+	if len(report.Plans) != 0 {
+		t.Errorf("expected no plans, got %d", len(report.Plans))
+	}
+}
+
+func TestRun_attachmentOverCap_skippedAndLogged(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	// 2 GB > 1 GB cap.
+	bigSize := fmt.Sprintf("%d", int64(2)<<30)
+	bw := &fakeBW{items: []bitwarden.Item{
+		loginWithAttachments("bw-1", "Notes", []bitwarden.Attachment{
+			{ID: "att-big", FileName: "huge.bin", Size: bigSize, SizeName: "2 GB"},
+		}),
+	}}
+
+	engine := newTestEngine(bw, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := countAction(op.attachments, "attach"); got != 0 {
+		t.Errorf("oversized attachment must not be uploaded, got %d attach calls", got)
+	}
+	if len(report.Errors) == 0 {
+		t.Errorf("expected oversized attachment to be reported as an error")
+	}
+	if len(report.Plans) != 1 || len(report.Plans[0].Attachments) != 1 ||
+		report.Plans[0].Attachments[0].Action != AttachmentSkip {
+		t.Errorf("expected SKIP attachment change in plan, got %+v", report.Plans[0].Attachments)
+	}
+}
+
+func TestRun_dryRun_listsPlannedAttachmentOps(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	item := loginWithAttachments("bw-1", "Notes", []bitwarden.Attachment{
+		{ID: "att-1", FileName: "doc.pdf", Size: "1024"},
+	})
+
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{item}}, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(op.created)+len(op.attachments) != 0 {
+		t.Error("dry-run must not perform any OP writes")
+	}
+	if len(report.Plans) != 1 || len(report.Plans[0].Attachments) != 1 {
+		t.Fatalf("expected one plan with one planned attachment, got %+v", report.Plans)
+	}
+	if report.Plans[0].Attachments[0].Action != AttachmentAdd {
+		t.Errorf("expected planned ADD action, got %v", report.Plans[0].Attachments[0].Action)
+	}
+}
+
+func TestRun_attachmentLabelCollision_skipsSecond(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	// Two BW attachments whose sanitized labels collide (`a.b` and `a_b` both
+	// become `a_b`). The second add must be skipped, not silently overwrite.
+	bw := &fakeBW{items: []bitwarden.Item{
+		loginWithAttachments("bw-1", "Notes", []bitwarden.Attachment{
+			{ID: "att-1", FileName: "a.b", Size: "10"},
+			{ID: "att-2", FileName: "a_b", Size: "10"},
+		}),
+	}}
+
+	engine := newTestEngine(bw, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := countAction(op.attachments, "attach"); got != 1 {
+		t.Errorf("expected exactly 1 attach (collision skip), got %d", got)
+	}
+	skipped := 0
+	for _, a := range report.Plans[0].Attachments {
+		if a.Action == AttachmentSkip && strings.Contains(a.SkipReason, "collides") {
+			skipped++
+		}
+	}
+	if skipped != 1 {
+		t.Errorf("expected 1 SKIP attachment in plan due to collision, got %d", skipped)
+	}
+	if len(report.Errors) == 0 {
+		t.Error("expected collision to be surfaced as an error in the report")
+	}
+}
+
+func TestRun_attachmentDownloadFails_continuesAndRecordsError(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	bw := &fakeBW{
+		items: []bitwarden.Item{loginWithAttachments("bw-1", "Notes", []bitwarden.Attachment{
+			{ID: "att-1", FileName: "doc.pdf", Size: "1024"},
+		})},
+		downloadErr: fmt.Errorf("bw network error"),
+	}
+
+	engine := newTestEngine(bw, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected top-level error: %v", err)
+	}
+	if len(op.created) != 1 {
+		t.Errorf("item itself should still be created even if attachment download fails")
+	}
+	if len(report.Errors) == 0 {
+		t.Error("expected download failure to surface in report.Errors")
+	}
+	entry, _ := st.Get("bw-1")
+	if len(entry.Attachments) != 0 {
+		t.Errorf("state must not record failed attachment, got %d", len(entry.Attachments))
+	}
+}
+
+// transformerHash recomputes the item hash the same way the engine does so
+// tests can pre-seed state with a hash that matches an unchanged item.
+func transformerHash(t *testing.T, item bitwarden.Item) string {
+	t.Helper()
+	// Vault ID is not part of the hash, so any value works here.
+	return transformer.Transform(item, "vault-personal").Hash
 }
 
 func TestRun_createdItem_hasHiddenBWIDField(t *testing.T) {

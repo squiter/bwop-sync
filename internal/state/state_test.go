@@ -71,6 +71,79 @@ func TestSet_overwrite(t *testing.T) {
 	}
 }
 
+func TestSetAttachments_persistsAndPreservedAcrossSet(t *testing.T) {
+	s := &State{Version: 1, Entries: make(map[string]Entry)}
+	s.Set("bw-1", "op-1", "hash-1")
+
+	atts := []Attachment{
+		{BWID: "att-1", FileName: "doc.pdf", Size: "1024", OPLabel: "doc.pdf"},
+	}
+	if !s.SetAttachments("bw-1", atts) {
+		t.Fatal("expected SetAttachments to return true for existing entry")
+	}
+
+	e, _ := s.Get("bw-1")
+	if len(e.Attachments) != 1 || e.Attachments[0].BWID != "att-1" {
+		t.Fatalf("attachments not stored: %+v", e.Attachments)
+	}
+
+	// A subsequent Set() (e.g. a fields-only update) must not wipe attachments.
+	s.Set("bw-1", "op-1", "hash-2")
+	e, _ = s.Get("bw-1")
+	if len(e.Attachments) != 1 {
+		t.Errorf("Set should preserve attachments, got %d", len(e.Attachments))
+	}
+}
+
+func TestSetAttachments_missingEntry_returnsFalse(t *testing.T) {
+	s := &State{Version: 1, Entries: make(map[string]Entry)}
+	if s.SetAttachments("nonexistent", []Attachment{{BWID: "a"}}) {
+		t.Error("expected false for missing entry")
+	}
+}
+
+func TestLoad_legacyFile_withoutAttachmentsField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	legacy := `{"version":1,"entries":{"bw-1":{"op_id":"op-1","bw_hash":"h","synced_at":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0600); err != nil {
+		t.Fatalf("seeding legacy file: %v", err)
+	}
+
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	e, ok := s.Get("bw-1")
+	if !ok {
+		t.Fatal("expected bw-1 in loaded state")
+	}
+	if e.Attachments != nil {
+		t.Errorf("expected nil attachments for legacy entry, got %+v", e.Attachments)
+	}
+}
+
+func TestFindByOPID(t *testing.T) {
+	s := &State{Version: 1, Entries: make(map[string]Entry)}
+	s.Set("bw-1", "op-aaa", "h1")
+	s.Set("bw-2", "op-bbb", "h2")
+
+	bwID, entry, ok := s.FindByOPID("op-bbb")
+	if !ok {
+		t.Fatal("expected to find op-bbb")
+	}
+	if bwID != "bw-2" {
+		t.Errorf("expected bwID 'bw-2', got %q", bwID)
+	}
+	if entry.OPID != "op-bbb" {
+		t.Errorf("expected entry.OPID 'op-bbb', got %q", entry.OPID)
+	}
+
+	if _, _, ok := s.FindByOPID("op-missing"); ok {
+		t.Error("expected ok=false for missing op id")
+	}
+}
+
 func TestSave_createsParentDir(t *testing.T) {
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "deep", "nested", "state.json")

@@ -349,6 +349,69 @@ func (c *Client) EditItem(opID string, item Item) (*Item, error) {
 	return &updated, nil
 }
 
+// AttachFile attaches a local file to an existing 1Password item.
+// label becomes the file field's label; pass the already-sanitized form
+// returned by SanitizeFileLabel so the op CLI's assignment parser does not
+// misinterpret special characters (`.`, `=`, `[`, `]`).
+// The op CLI uses the bracket-assignment form: `op item edit <id> "<label>[file]=<path>"`.
+// Note: no `@` prefix on the path — that's curl/httpie syntax, not op's.
+func (c *Client) AttachFile(opID, vaultID, label, path string) error {
+	assignment := fmt.Sprintf("%s[file]=%s", label, path)
+	_, err := c.run("op", "item", "edit", opID,
+		"--vault", vaultID,
+		assignment,
+	)
+	if err != nil {
+		return fmt.Errorf("op item edit %q attach %q: %w", opID, label, err)
+	}
+	return nil
+}
+
+// DeleteFile removes a file attachment from an existing 1Password item.
+// fieldRef must match the sanitized label used at attach time.
+func (c *Client) DeleteFile(opID, vaultID, fieldRef string) error {
+	assignment := fmt.Sprintf("%s[delete]", fieldRef)
+	_, err := c.run("op", "item", "edit", opID,
+		"--vault", vaultID,
+		assignment,
+	)
+	if err != nil {
+		return fmt.Errorf("op item edit %q delete %q: %w", opID, fieldRef, err)
+	}
+	return nil
+}
+
+// SanitizeFileLabel produces a label that op CLI's assignment parser accepts.
+// The op assignment grammar `[<section>.]<field>[<type>]=<value>` treats `.`,
+// `=`, `[`, `]`, and whitespace as structural — labels containing them fail
+// with "not formatted correctly" before the file is even opened. Replace each
+// offender with `_`; collapse runs of `_`; trim leading/trailing `_`.
+func SanitizeFileLabel(s string) string {
+	if s == "" {
+		return "attachment"
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	prevUnderscore := false
+	for _, r := range s {
+		switch {
+		case r == '.', r == '=', r == '[', r == ']', r == ' ', r == '\t', r == '\n', r == '\\':
+			if !prevUnderscore {
+				b.WriteByte('_')
+				prevUnderscore = true
+			}
+		default:
+			b.WriteRune(r)
+			prevUnderscore = false
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return "attachment"
+	}
+	return out
+}
+
 // withAccount prepends --account <shorthand> to args when shorthand is non-empty.
 // The flag must come before the subcommand for the op CLI.
 func withAccount(account string, args []string) []string {

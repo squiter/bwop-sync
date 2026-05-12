@@ -162,6 +162,83 @@ func TestEditItem_passesItemIDAndTemplate(t *testing.T) {
 	}
 }
 
+// --- SanitizeFileLabel ---
+
+func TestSanitizeFileLabel(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"plain", "plain"},
+		{"file.pdf", "file_pdf"},
+		{"app.license-key", "app_license-key"},
+		{"a.b.c.d", "a_b_c_d"},
+		{"user@example.com Backup codes.txt", "user@example_com_Backup_codes_txt"},
+		{"name=with=equals", "name_with_equals"},
+		{"name[with]brackets", "name_with_brackets"},
+		{"   spaces   ", "spaces"},
+		{"...", "attachment"},
+		{"", "attachment"},
+		{"multiple...dots", "multiple_dots"},
+	}
+	for _, c := range cases {
+		got := SanitizeFileLabel(c.in)
+		if got != c.want {
+			t.Errorf("SanitizeFileLabel(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// --- AttachFile ---
+
+func TestAttachFile_buildsAssignmentExpression(t *testing.T) {
+	var calls [][]string
+	c := newWithRunner(captureArgs(``, &calls))
+
+	if err := c.AttachFile("op-id", "v1", "report.pdf", "/tmp/report.pdf"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) == 0 {
+		t.Fatal("runner was not called")
+	}
+	args := calls[0]
+	if !hasArg(args, "op-id") {
+		t.Errorf("expected item ID in args: %v", args)
+	}
+	if !hasFlag(args, "--vault", "v1") {
+		t.Errorf("expected --vault v1: %v", args)
+	}
+	if !hasArg(args, "report.pdf[file]=/tmp/report.pdf") {
+		t.Errorf("expected file assignment expression in args: %v", args)
+	}
+}
+
+func TestAttachFile_cliError(t *testing.T) {
+	c := newWithRunner(func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("upload failed")
+	})
+	if err := c.AttachFile("op-id", "v1", "x.pdf", "/tmp/x.pdf"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// --- DeleteFile ---
+
+func TestDeleteFile_buildsDeleteExpression(t *testing.T) {
+	var calls [][]string
+	c := newWithRunner(captureArgs(``, &calls))
+
+	if err := c.DeleteFile("op-id", "v1", "report.pdf"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	args := calls[0]
+	if !hasArg(args, "report.pdf[delete]") {
+		t.Errorf("expected delete expression in args: %v", args)
+	}
+	if !hasFlag(args, "--vault", "v1") {
+		t.Errorf("expected --vault v1: %v", args)
+	}
+}
+
 // --- GrantVaultAccess ---
 
 func TestGrantVaultAccess_passesVaultUserAndPermissions(t *testing.T) {

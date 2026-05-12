@@ -13,9 +13,21 @@ import (
 
 // Entry tracks a single synced item.
 type Entry struct {
-	OPID     string `json:"op_id"`
-	BWHash   string `json:"bw_hash"`
-	SyncedAt string `json:"synced_at"`
+	OPID        string       `json:"op_id"`
+	BWHash      string       `json:"bw_hash"`
+	SyncedAt    string       `json:"synced_at"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+// Attachment records one BW attachment that bwop-sync has uploaded to 1Password.
+// BWID is the Bitwarden attachment ID; Size and FileName come from the BW item
+// JSON and feed the attachment-change detector. OPLabel is the label used when
+// attaching the file to the 1Password item — it doubles as the deletion handle.
+type Attachment struct {
+	BWID     string `json:"bw_id"`
+	FileName string `json:"file_name"`
+	Size     string `json:"size"`
+	OPLabel  string `json:"op_label"`
 }
 
 // State is the full mapping persisted to disk.
@@ -62,17 +74,46 @@ func (s *State) Save(path string) error {
 	return nil
 }
 
-// Set records or updates the mapping for a BW item.
+// Set records or updates the mapping for a BW item. Existing attachment
+// metadata is preserved — attachments are tracked separately via SetAttachments
+// so that re-syncing an item's fields does not clobber the attachment record.
 func (s *State) Set(bwID, opID, hash string) {
+	existing := s.Entries[bwID]
 	s.Entries[bwID] = Entry{
-		OPID:     opID,
-		BWHash:   hash,
-		SyncedAt: time.Now().UTC().Format(time.RFC3339),
+		OPID:        opID,
+		BWHash:      hash,
+		SyncedAt:    time.Now().UTC().Format(time.RFC3339),
+		Attachments: existing.Attachments,
 	}
+}
+
+// SetAttachments replaces the attachment list on an existing entry. Call this
+// after a successful attachment sync to record what is now in 1Password.
+// Returns false when no entry exists for bwID — the caller should Set() first.
+func (s *State) SetAttachments(bwID string, atts []Attachment) bool {
+	entry, ok := s.Entries[bwID]
+	if !ok {
+		return false
+	}
+	entry.Attachments = atts
+	entry.SyncedAt = time.Now().UTC().Format(time.RFC3339)
+	s.Entries[bwID] = entry
+	return true
 }
 
 // Get returns the entry for a BW item ID, and whether it exists.
 func (s *State) Get(bwID string) (Entry, bool) {
 	e, ok := s.Entries[bwID]
 	return e, ok
+}
+
+// FindByOPID returns the BW item ID and entry whose OPID matches opID.
+// Used by `bwop-sync check op:<id>` to discover the paired BW item.
+func (s *State) FindByOPID(opID string) (bwID string, entry Entry, ok bool) {
+	for k, v := range s.Entries {
+		if v.OPID == opID {
+			return k, v, true
+		}
+	}
+	return "", Entry{}, false
 }

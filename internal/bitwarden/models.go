@@ -38,22 +38,34 @@ type Folder struct {
 
 // Item is a single Bitwarden vault item.
 type Item struct {
-	ID             string      `json:"id"`
-	OrganizationID string      `json:"organizationId"`
-	FolderID       string      `json:"folderId"`
-	Type           ItemType    `json:"type"`
-	Name           string      `json:"name"`
-	Notes          string      `json:"notes"`
-	Favorite       bool        `json:"favorite"`
-	Fields         []Field     `json:"fields"`
-	Login          *Login      `json:"login"`
-	SecureNote     *SecureNote `json:"secureNote"`
-	Card           *Card       `json:"card"`
-	Identity       *Identity   `json:"identity"`
-	CollectionIDs  []string    `json:"collectionIds"`
-	RevisionDate   string      `json:"revisionDate"`
-	CreationDate   string      `json:"creationDate"`
-	DeletedDate    *string     `json:"deletedDate"`
+	ID             string       `json:"id"`
+	OrganizationID string       `json:"organizationId"`
+	FolderID       string       `json:"folderId"`
+	Type           ItemType     `json:"type"`
+	Name           string       `json:"name"`
+	Notes          string       `json:"notes"`
+	Favorite       bool         `json:"favorite"`
+	Fields         []Field      `json:"fields"`
+	Login          *Login       `json:"login"`
+	SecureNote     *SecureNote  `json:"secureNote"`
+	Card           *Card        `json:"card"`
+	Identity       *Identity    `json:"identity"`
+	CollectionIDs  []string     `json:"collectionIds"`
+	Attachments    []Attachment `json:"attachments"`
+	RevisionDate   string       `json:"revisionDate"`
+	CreationDate   string       `json:"creationDate"`
+	DeletedDate    *string      `json:"deletedDate"`
+}
+
+// Attachment is a file attached to a Bitwarden item.
+// Size is the raw byte count as a string in the BW JSON (e.g. "12345");
+// SizeName is the human form (e.g. "12 KB"). Both come straight from the CLI.
+type Attachment struct {
+	ID       string `json:"id"`
+	FileName string `json:"fileName"`
+	Size     string `json:"size"`
+	SizeName string `json:"sizeName"`
+	URL      string `json:"url"`
 }
 
 // HasPasskey returns true when the item contains FIDO2 passkey credentials that
@@ -107,19 +119,19 @@ type URI struct {
 // Fido2Credential holds passkey data. These cannot be synced between password managers
 // via CLI — they are logged for manual action.
 type Fido2Credential struct {
-	CredentialID    string `json:"credentialId"`
-	KeyType         string `json:"keyType"`
-	KeyAlgorithm    string `json:"keyAlgorithm"`
-	KeyCurve        string `json:"keyCurve"`
-	KeyValue        string `json:"keyValue"`
-	RPId            string `json:"rpId"`
-	UserHandle      string `json:"userHandle"`
-	UserName        string `json:"userName"`
+	CredentialID    string          `json:"credentialId"`
+	KeyType         string          `json:"keyType"`
+	KeyAlgorithm    string          `json:"keyAlgorithm"`
+	KeyCurve        string          `json:"keyCurve"`
+	KeyValue        string          `json:"keyValue"`
+	RPId            string          `json:"rpId"`
+	UserHandle      string          `json:"userHandle"`
+	UserName        string          `json:"userName"`
 	Counter         json.RawMessage `json:"counter"` // BW returns this as string or int depending on version
-	RPName          string `json:"rpName"`
-	UserDisplayName string `json:"userDisplayName"`
-	Discoverable    string `json:"discoverable"`
-	CreationDate    string `json:"creationDate"`
+	RPName          string          `json:"rpName"`
+	UserDisplayName string          `json:"userDisplayName"`
+	Discoverable    string          `json:"discoverable"`
+	CreationDate    string          `json:"creationDate"`
 }
 
 // SecureNote holds the secure note sub-type.

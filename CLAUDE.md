@@ -74,6 +74,24 @@ Backup failures are non-fatal — a warning is printed and the sync continues.
 ### Deleted items
 Items with `DeletedDate != nil` are silently skipped. No tombstones in 1P. This is v2 scope.
 
+### Attachment sync (per-attachment diff, separate from item-field hash)
+BW attachments sync to 1Password as plain file attachments via `op item edit <id> "<label>[file]=@<path>"`.
+The label used at attach time is the BW filename — it's also the deletion handle (`<label>[delete]`).
+
+Change detection is independent of the item-field hash:
+- Per-attachment metadata (`BWID`, `FileName`, `Size`, `OPLabel`) lives in `state.Entry.Attachments`.
+- `diffAttachments` matches by BW attachment ID. Renames in BW change the ID, so they appear as a remove+add pair — same as BW's own model.
+- Item fields and attachments are evaluated independently. An attachment-only change emits an `UPDATE` plan but does NOT call `op item edit` on the template — only the attachment slot is touched.
+
+Other constraints:
+- Files larger than `MaxAttachmentSize` (1 GB) are skipped and surfaced as errors. The cap is conservative (OP's documented limit is ~2 GB on Business).
+- Attachments are downloaded to a per-run temp dir (`os.MkdirTemp`, mode 0700) and removed individually as soon as upload finishes; the dir is wiped on `Run` return via `cleanupAttachmentTempDir`.
+- Each attachment op (`AttachFile`/`DeleteFile`) goes through `opVoidWithRetry` — same `opDelay` pacing and rate-limit backoff as item create/update. A rate-limit during attachment sync aborts the run the same way item rate-limits do, and partial progress is captured because `state.SetAttachments` is called after every successful op.
+- Per-attachment failures (download error, attach error) are appended to `report.Errors` but the item itself stays synced and the run continues.
+- Skipped items (no vault mapping, passkey-only, transformer skip) get no attachment sync.
+
+Recover limitation: `bwop-sync recover` rebuilds state from the hidden `bwop_sync_bw_id` field on each OP item but does NOT read OP's `files` array. After a recover, attachment state is empty, so the next sync re-uploads every BW attachment — duplicates in 1Password. Full attachment recovery is v2.
+
 ### `bw unlock --passwordenv`
 BW unlock uses `--passwordenv BWOP_TMP_PASS` (not `--stdin`) because `--stdin` is
 inconsistent across `bw` versions. The password is passed via a short-lived child-process

@@ -18,14 +18,14 @@ const (
 type FieldType string
 
 const (
-	FieldTypeString      FieldType = "STRING"
-	FieldTypeConcealed   FieldType = "CONCEALED"
-	FieldTypeOTP         FieldType = "OTP"
-	FieldTypeURL         FieldType = "URL"
-	FieldTypeCCNumber    FieldType = "CREDIT_CARD_NUMBER"
-	FieldTypeMonthYear   FieldType = "MONTH_YEAR"
-	FieldTypeDate        FieldType = "DATE"
-	FieldTypePhone       FieldType = "PHONE"
+	FieldTypeString    FieldType = "STRING"
+	FieldTypeConcealed FieldType = "CONCEALED"
+	FieldTypeOTP       FieldType = "OTP"
+	FieldTypeURL       FieldType = "URL"
+	FieldTypeCCNumber  FieldType = "CREDIT_CARD_NUMBER"
+	FieldTypeMonthYear FieldType = "MONTH_YEAR"
+	FieldTypeDate      FieldType = "DATE"
+	FieldTypePhone     FieldType = "PHONE"
 )
 
 // FieldPurpose marks well-known fields on login items.
@@ -47,6 +47,16 @@ type Item struct {
 	Fields   []Field  `json:"fields,omitempty"`
 	URLs     []URL    `json:"urls,omitempty"`
 	Tags     []string `json:"tags,omitempty"`
+	Files    []File   `json:"files,omitempty"`
+}
+
+// File represents a file attachment on a 1Password item, as returned by
+// `op item get --format json`.
+type File struct {
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	ContentPath string `json:"content_path,omitempty"`
 }
 
 // VaultRef is the vault reference embedded inside an Item.

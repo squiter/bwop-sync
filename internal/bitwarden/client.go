@@ -1,9 +1,11 @@
 package bitwarden
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 // RunFunc executes a command and returns its stdout. Swap this out in tests.
@@ -26,7 +28,17 @@ func newWithRunner(session string, run RunFunc) *Client {
 }
 
 func realRun(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).Output()
+	cmd := exec.Command(name, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
+	}
+	return out, err
 }
 
 // Sync forces the bw CLI to pull the latest vault state from the server.
@@ -38,6 +50,20 @@ func (c *Client) Sync() error {
 		return fmt.Errorf("bw sync: %w", err)
 	}
 	return nil
+}
+
+// GetItem returns a single vault item by ID. Used for targeted lookups (e.g.
+// `bwop-sync check`) where iterating all items would be wasteful.
+func (c *Client) GetItem(id string) (*Item, error) {
+	out, err := c.run("bw", "get", "item", id, "--session", c.session)
+	if err != nil {
+		return nil, fmt.Errorf("bw get item %s: %w", id, err)
+	}
+	var item Item
+	if err := json.Unmarshal(out, &item); err != nil {
+		return nil, fmt.Errorf("parsing bw item: %w", err)
+	}
+	return &item, nil
 }
 
 // ListItems returns all vault items accessible to the current session.
@@ -67,6 +93,27 @@ func (c *Client) ListCollections() ([]Collection, error) {
 		return nil, fmt.Errorf("parsing bw collections: %w", err)
 	}
 	return cols, nil
+}
+
+// DownloadAttachment downloads an attachment into outputDir, decrypting it
+// from the BW server. The CLI saves the file with its original filename inside
+// the directory — the directory MUST exist and end with a path separator so
+// `bw get attachment` treats it as a directory rather than a file path.
+// Using directory-output is intentional: when `--output` is a non-existent
+// file path, some BW CLI versions silently write to the wrong location.
+func (c *Client) DownloadAttachment(itemID, attachmentID, outputDir string) error {
+	if !strings.HasSuffix(outputDir, "/") {
+		outputDir += "/"
+	}
+	_, err := c.run("bw", "get", "attachment", attachmentID,
+		"--itemid", itemID,
+		"--output", outputDir,
+		"--session", c.session,
+	)
+	if err != nil {
+		return fmt.Errorf("bw get attachment %s: %w", attachmentID, err)
+	}
+	return nil
 }
 
 // Export writes a plaintext JSON export of the entire vault to outputPath.

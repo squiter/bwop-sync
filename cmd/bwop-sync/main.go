@@ -56,7 +56,7 @@ func main() {
 		SilenceUsage: true,
 	}
 
-	root.AddCommand(syncCmd(), recoverCmd(), backfillCmd(), grantAccessCmd(), unlockCmd(), versionCmd(), passkeyAckCmd())
+	root.AddCommand(syncCmd(), recoverCmd(), backfillCmd(), grantAccessCmd(), unlockCmd(), versionCmd(), passkeyAckCmd(), checkCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -662,6 +662,269 @@ func syncCloudAckedPasskeys(ackedPath string, opClient *onepassword.Client) {
 func pushAckedPasskeysToCloud(ackedPath string, opClient *onepassword.Client) error {
 	acked := loadAckedPasskeys(ackedPath)
 	return opClient.PushCloudPasskeyAcked(marshalAckedPasskeys(acked))
+}
+
+func checkCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "check <bw:<id>|op:<id>>",
+		Short: "Show the sync status of a single item, by BW or 1P ID",
+		Long: `check fetches the structure of an item from Bitwarden, 1Password, and state.json,
+and prints a side-by-side summary. Useful when an item won't sync or
+appears out of date.
+
+No field values are printed — only labels, sizes, and IDs — so the
+output is safe to share with someone helping you debug.`,
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCheck(args[0])
+		},
+	}
+}
+
+func runCheck(arg string) error {
+	side, id, err := parseCheckID(arg)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return fmt.Errorf("load config: %w\nRun `bwop-setup` first.", err)
+	}
+
+	bwSession, _ := keychain.Read(keychain.AccountBWSession)
+	bwClient := bitwarden.New(bwSession)
+
+	opToken, _ := keychain.Read(keychain.AccountOPToken)
+	opAccount, _ := keychain.Read(keychain.AccountOPAccount)
+	var opClient *onepassword.Client
+	if opToken == "" {
+		opClient = onepassword.NewFromEnv(opAccount)
+	} else {
+		opClient = onepassword.New(opToken)
+	}
+
+	statePath := filepath.Join(configDir(), "state.json")
+	st, err := state.Load(statePath)
+	if err != nil {
+		return fmt.Errorf("loading state: %w", err)
+	}
+
+	// Resolve bwID + opID from whichever side the user gave us.
+	var bwID, opID string
+	var stateEntry state.Entry
+	var stateFound bool
+	switch side {
+	case "bw":
+		bwID = id
+		if e, ok := st.Get(bwID); ok {
+			opID = e.OPID
+			stateEntry = e
+			stateFound = true
+		}
+	case "op":
+		opID = id
+		if k, e, ok := st.FindByOPID(opID); ok {
+			bwID = k
+			stateEntry = e
+			stateFound = true
+		}
+	}
+
+	fmt.Printf("\n─── bwop-sync check ─────────────────────────────────────\n")
+
+	printBWSection(bwClient, bwID)
+	printOPSection(opClient, cfg, opID)
+	printStateSection(stateFound, bwID, stateEntry)
+
+	return nil
+}
+
+// parseCheckID splits "bw:<id>" or "op:<id>" into ("bw"|"op", "<id>").
+func parseCheckID(arg string) (side, id string, err error) {
+	switch {
+	case strings.HasPrefix(arg, "bw:"):
+		return "bw", strings.TrimPrefix(arg, "bw:"), nil
+	case strings.HasPrefix(arg, "op:"):
+		return "op", strings.TrimPrefix(arg, "op:"), nil
+	}
+	return "", "", fmt.Errorf("ID must be prefixed with bw: or op: (got %q)", arg)
+}
+
+func printBWSection(bwClient *bitwarden.Client, bwID string) {
+	fmt.Printf("\n%s\n", bold("BITWARDEN"))
+	if bwID == "" {
+		fmt.Printf("  %s (no BW pairing in state.json)\n", gray("—"))
+		return
+	}
+	item, err := bwClient.GetItem(bwID)
+	if err != nil {
+		fmt.Printf("  %s could not fetch: %v\n", red("✗"), err)
+		return
+	}
+
+	deleted := "no"
+	if item.DeletedDate != nil {
+		deleted = yellow("yes (in trash)")
+	}
+
+	fmt.Printf("  ID:           %s\n", item.ID)
+	fmt.Printf("  Name:         %s\n", item.Name)
+	fmt.Printf("  Type:         %s (%d)\n", bwTypeName(item.Type), int(item.Type))
+	fmt.Printf("  Collections:  %v\n", collectionsOrPersonal(item.CollectionIDs))
+	fmt.Printf("  Deleted:      %s\n", deleted)
+	fmt.Printf("  Passkeys:     %d\n", countPasskeys(item))
+	fmt.Printf("  Username:     %s\n", presentIfNonEmpty(loginField(item, "username")))
+	fmt.Printf("  Password:     %s\n", presentIfNonEmpty(loginField(item, "password")))
+	fmt.Printf("  TOTP:         %s\n", presentIfNonEmpty(loginField(item, "totp")))
+	fmt.Printf("  URIs:         %d\n", countURIs(item))
+	fmt.Printf("  Custom fields: %d\n", len(item.Fields))
+	fmt.Printf("  Attachments:  %d\n", len(item.Attachments))
+	for _, a := range item.Attachments {
+		size := a.SizeName
+		if size == "" {
+			size = a.Size + " bytes"
+		}
+		fmt.Printf("    • %s (%s)\n", a.FileName, gray(size))
+	}
+}
+
+func printOPSection(opClient *onepassword.Client, cfg *config.Config, opID string) {
+	fmt.Printf("\n%s\n", bold("1PASSWORD"))
+	if opID == "" {
+		fmt.Printf("  %s (no 1P pairing in state.json)\n", gray("—"))
+		return
+	}
+	item, vaultID, err := findOPItemAnyVault(opClient, cfg, opID)
+	if err != nil {
+		fmt.Printf("  %s could not fetch: %v\n", red("✗"), err)
+		return
+	}
+
+	vaultName := vaultID
+	for _, m := range cfg.Mappings {
+		if m.OPVaultID == vaultID && m.OPVaultName != "" {
+			vaultName = fmt.Sprintf("%s (%s)", m.OPVaultName, vaultID)
+			break
+		}
+	}
+
+	fmt.Printf("  ID:           %s\n", item.ID)
+	fmt.Printf("  Title:        %s\n", item.Title)
+	fmt.Printf("  Vault:        %s\n", vaultName)
+	fmt.Printf("  Category:     %s\n", item.Category)
+	fmt.Printf("  Fields:       %d %s\n", len(item.Fields), gray("(labels only, values hidden)"))
+	for _, f := range item.Fields {
+		fmt.Printf("    • %s [%s]\n", labelOrID(f), f.Type)
+	}
+	fmt.Printf("  URLs:         %d\n", len(item.URLs))
+	fmt.Printf("  Attachments:  %d\n", len(item.Files))
+	for _, f := range item.Files {
+		size := fmt.Sprintf("%d bytes", f.Size)
+		fmt.Printf("    • %s (%s)\n", f.Name, gray(size))
+	}
+}
+
+func printStateSection(found bool, bwID string, entry state.Entry) {
+	fmt.Printf("\n%s\n", bold("STATE"))
+	if !found {
+		fmt.Printf("  %s (no entry — item has never been synced or state.json was reset)\n", gray("—"))
+		return
+	}
+	hash := entry.BWHash
+	if len(hash) > 12 {
+		hash = hash[:12] + "…"
+	}
+	fmt.Printf("  BW → OP:      %s → %s\n", bwID, entry.OPID)
+	fmt.Printf("  Hash:         %s\n", hash)
+	fmt.Printf("  Synced at:    %s\n", entry.SyncedAt)
+	fmt.Printf("  Attachments:  %d tracked\n", len(entry.Attachments))
+	for _, a := range entry.Attachments {
+		fmt.Printf("    • %s → %s (%s bytes)\n", a.FileName, a.OPLabel, a.Size)
+	}
+}
+
+func findOPItemAnyVault(opClient *onepassword.Client, cfg *config.Config, opID string) (*onepassword.Item, string, error) {
+	var lastErr error
+	for _, vaultID := range uniqueVaultIDs(cfg) {
+		item, err := opClient.GetItem(opID, vaultID)
+		if err == nil {
+			return item, vaultID, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no configured vaults to search")
+	}
+	return nil, "", fmt.Errorf("op item %s not found in any configured vault: %w", opID, lastErr)
+}
+
+func bwTypeName(t bitwarden.ItemType) string {
+	switch t {
+	case bitwarden.TypeLogin:
+		return "Login"
+	case bitwarden.TypeSecureNote:
+		return "SecureNote"
+	case bitwarden.TypeCard:
+		return "Card"
+	case bitwarden.TypeIdentity:
+		return "Identity"
+	case bitwarden.TypeSSHKey:
+		return "SSHKey"
+	default:
+		return "Unknown"
+	}
+}
+
+func collectionsOrPersonal(ids []string) string {
+	if len(ids) == 0 {
+		return "[personal]"
+	}
+	return fmt.Sprintf("%v", ids)
+}
+
+func countPasskeys(item *bitwarden.Item) int {
+	if item.Login == nil {
+		return 0
+	}
+	return len(item.Login.Fido2Credentials)
+}
+
+func loginField(item *bitwarden.Item, name string) string {
+	if item.Login == nil {
+		return ""
+	}
+	switch name {
+	case "username":
+		return item.Login.Username
+	case "password":
+		return item.Login.Password
+	case "totp":
+		return item.Login.TOTP
+	}
+	return ""
+}
+
+func countURIs(item *bitwarden.Item) int {
+	if item.Login == nil {
+		return 0
+	}
+	return len(item.Login.URIs)
+}
+
+func presentIfNonEmpty(s string) string {
+	if s == "" {
+		return gray("absent")
+	}
+	return green("present")
+}
+
+func labelOrID(f onepassword.Field) string {
+	if f.Label != "" {
+		return f.Label
+	}
+	return f.ID
 }
 
 func passkeyAckCmd() *cobra.Command {
