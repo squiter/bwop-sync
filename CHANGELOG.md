@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-05-12
+
+### Added
+- Attachment sync: file attachments on Bitwarden items are now uploaded to the corresponding 1Password item as plain attachments. Diffs are tracked per-attachment in `state.json` (by BW attachment ID + filename + size) so only added attachments are uploaded and only removed attachments are deleted from 1Password — no re-upload of unchanged files. Files larger than 1 GB are skipped and logged as errors. Attachment failures (download, upload, delete) are recorded in the run report but do not abort the sync. Attachment-only changes (item fields unchanged, attachments differ) produce an `UPDATE` plan that touches only the attachment slot, not the item template.
+- `bwop-sync check <bw:<id>|op:<id>>`: new command that prints a structure-only summary of an item from Bitwarden, 1Password, and `state.json` for debugging sync mismatches. No field values are shown — only IDs, labels, sizes, and presence/absence indicators — so output is safe to share.
+
+### Changed
+- Downloaded attachments are staged under `~/.config/bwop-sync/tmp/` instead of `$TMPDIR`, so they live next to `logs/` and `backups/` for easy inspection during a sync.
+
+### Notes
+- Special-purpose mapping (e.g. SSH keys → 1Password SSH Key category) is not in scope here — every attachment becomes a plain 1Password file attachment.
+- Attachment labels in 1Password are sanitized from the BW filename: `.`, `=`, `[`, `]`, and whitespace are replaced with `_`. The op CLI's assignment grammar parses these as syntax, so the original filename cannot be used verbatim. The underlying file content is unchanged — only the field label differs (e.g. `notes.txt` → `notes_txt`).
+- If `state.json` is rebuilt via `bwop-sync recover`, attachment state is not repopulated from 1Password — the next sync may re-upload all attachments, producing duplicates in 1Password for already-attached files. Full attachment recovery is deferred to v2.
+
 ## [0.14.0] - 2026-05-08
 
 ### Added
@@ -192,7 +206,8 @@ Re-run `bwop-setup` and choose to reinstall the LaunchAgent when prompted. It wi
 - GitHub Actions release workflow — triggers on `v*` tags, cross-compiles for darwin/amd64 and darwin/arm64, publishes GitHub Release with binaries and checksums
 - Makefile with `build`, `setup`, `sync`, `dry-run`, `test`, `install`, `clean` targets
 
-[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/squiter/bwop-sync/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/squiter/bwop-sync/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/squiter/bwop-sync/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/squiter/bwop-sync/compare/v0.12.0...v0.12.1
