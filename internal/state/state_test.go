@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -120,6 +121,51 @@ func TestLoad_legacyFile_withoutAttachmentsField(t *testing.T) {
 	}
 	if e.Attachments != nil {
 		t.Errorf("expected nil attachments for legacy entry, got %+v", e.Attachments)
+	}
+}
+
+func TestSetArchived_persistsAndPreservedAcrossSet(t *testing.T) {
+	s := &State{Version: 1, Entries: make(map[string]Entry)}
+	s.Set("bw-1", "op-1", "hash-1")
+
+	if !s.SetArchived("bw-1", true) {
+		t.Fatal("expected SetArchived to return true for existing entry")
+	}
+	e, _ := s.Get("bw-1")
+	if !e.Archived {
+		t.Fatal("expected archived=true after SetArchived")
+	}
+
+	// A subsequent Set() (field-only update) must not clear the archived flag.
+	s.Set("bw-1", "op-1", "hash-2")
+	e, _ = s.Get("bw-1")
+	if !e.Archived {
+		t.Error("Set should preserve archived flag")
+	}
+}
+
+func TestSetArchived_missingEntry_returnsFalse(t *testing.T) {
+	s := &State{Version: 1, Entries: make(map[string]Entry)}
+	if s.SetArchived("nonexistent", true) {
+		t.Error("expected false for missing entry")
+	}
+}
+
+func TestSave_writesExplicitArchivedFalse(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+
+	s := &State{Version: 1, Entries: make(map[string]Entry)}
+	s.Set("bw-1", "op-1", "h")
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"archived": false`) {
+		t.Errorf("expected explicit \"archived\": false on disk, got:\n%s", string(raw))
 	}
 }
 

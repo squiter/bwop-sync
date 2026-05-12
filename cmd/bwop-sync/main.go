@@ -839,6 +839,11 @@ func printStateSection(found bool, bwID string, entry state.Entry) {
 	fmt.Printf("  BW → OP:      %s → %s\n", bwID, entry.OPID)
 	fmt.Printf("  Hash:         %s\n", hash)
 	fmt.Printf("  Synced at:    %s\n", entry.SyncedAt)
+	archivedTxt := "no"
+	if entry.Archived {
+		archivedTxt = yellow("yes (1P item is in the archive)")
+	}
+	fmt.Printf("  Archived:     %s\n", archivedTxt)
 	fmt.Printf("  Attachments:  %d tracked\n", len(entry.Attachments))
 	for _, a := range entry.Attachments {
 		fmt.Printf("    • %s → %s (%s bytes)\n", a.FileName, a.OPLabel, a.Size)

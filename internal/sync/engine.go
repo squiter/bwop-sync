@@ -53,6 +53,7 @@ type OPClient interface {
 	EditItem(string, onepassword.Item) (*onepassword.Item, error)
 	AttachFile(opID, vaultID, label, path string) error
 	DeleteFile(opID, vaultID, fieldRef string) error
+	ArchiveItem(opID, vaultID string) error
 }
 
 // MaxAttachmentSize is the per-file cap for attachments synced to 1Password.
@@ -64,9 +65,10 @@ const MaxAttachmentSize int64 = 1 << 30
 type Action string
 
 const (
-	ActionCreate Action = "CREATE"
-	ActionUpdate Action = "UPDATE"
-	ActionSkip   Action = "SKIP"
+	ActionCreate  Action = "CREATE"
+	ActionUpdate  Action = "UPDATE"
+	ActionSkip    Action = "SKIP"
+	ActionArchive Action = "ARCHIVE"
 )
 
 // ItemPlan represents the planned or executed action for one BW item.
@@ -122,7 +124,7 @@ type PasskeyEntry struct {
 
 // Summary returns a human-readable one-liner for display and logging.
 func (r *Report) Summary() string {
-	var creates, updates, skips int
+	var creates, updates, skips, archives int
 	for _, p := range r.Plans {
 		switch p.Action {
 		case ActionCreate:
@@ -131,14 +133,16 @@ func (r *Report) Summary() string {
 			updates++
 		case ActionSkip:
 			skips++
+		case ActionArchive:
+			archives++
 		}
 	}
 	kind := "SYNC"
 	if r.DryRun {
 		kind = "DRY RUN"
 	}
-	return fmt.Sprintf("[%s] %d created, %d updated, %d skipped, %d passkeys, %d errors",
-		kind, creates, updates, skips, len(r.Passkeys), len(r.Errors))
+	return fmt.Sprintf("[%s] %d created, %d updated, %d archived, %d skipped, %d passkeys, %d errors",
+		kind, creates, updates, archives, skips, len(r.Passkeys), len(r.Errors))
 }
 
 // ProgressFunc is called after each item is processed during a real sync.
@@ -179,8 +183,62 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 	defer e.cleanupAttachmentTempDir()
 
 	for i, item := range items {
+		existing, hasExisting := e.state.Get(item.ID)
+
+		// Deleted in Bitwarden → archive in 1Password (idempotent).
+		// We require state.OPID to know what to archive; un-synced deletes
+		// are skipped silently the same way they were before.
 		if item.DeletedDate != nil {
-			continue // deleted items are deferred to v2 — see README
+			if !hasExisting || existing.Archived {
+				continue
+			}
+			vaultID, ok := e.resolveVault(item)
+			if !ok {
+				report.Plans = append(report.Plans, ItemPlan{
+					Action:     ActionSkip,
+					BWItem:     item,
+					OPItemID:   existing.OPID,
+					SkipReason: "deleted in BW but no vault mapping — cannot archive without --vault",
+				})
+				continue
+			}
+			plan := ItemPlan{
+				Action:    ActionArchive,
+				BWItem:    item,
+				OPVaultID: vaultID,
+				OPItemID:  existing.OPID,
+			}
+			if !dryRun {
+				err := e.opVoidWithRetry(func() error {
+					return e.op.ArchiveItem(existing.OPID, vaultID)
+				})
+				if err != nil {
+					report.Errors = append(report.Errors, fmt.Sprintf("archive %q: %v", item.Name, err))
+					e.progress(ActionArchive, item.Name, err)
+					if errors.Is(err, ErrRateLimitExhausted) {
+						report.RemainingItems = len(items) - i
+						return report, ErrRateLimitExhausted
+					}
+					continue
+				}
+				e.state.SetArchived(item.ID, true)
+			}
+			report.Plans = append(report.Plans, plan)
+			e.progress(ActionArchive, item.Name, nil)
+			continue
+		}
+
+		// Restore case: BW item is live but the 1P item was archived earlier.
+		// v1 does not auto-unarchive; surface a clear SKIP so the user can act.
+		if hasExisting && existing.Archived {
+			report.Plans = append(report.Plans, ItemPlan{
+				Action:     ActionSkip,
+				BWItem:     item,
+				OPItemID:   existing.OPID,
+				SkipReason: "BW item restored but 1P item is archived — manually unarchive in 1Password to resume sync",
+			})
+			e.progress(ActionSkip, item.Name, nil)
+			continue
 		}
 
 		vaultID, ok := e.resolveVault(item)
@@ -218,7 +276,6 @@ func (e *Engine) Run(dryRun bool) (*Report, error) {
 		}
 
 		hasTOTP := item.Login != nil && item.Login.TOTP != ""
-		existing, hasExisting := e.state.Get(item.ID)
 
 		adds, removes := diffAttachments(item.Attachments, existing.Attachments)
 		hashChanged := !hasExisting || existing.BWHash != result.Hash
@@ -331,11 +388,13 @@ func FormatReport(r *Report) string {
 		}
 		switch p.Action {
 		case ActionCreate:
-			fmt.Fprintf(&b, "[CREATE] %s %q (bw:%s)%s\n", categoryOf(p.BWItem), p.BWItem.Name, p.BWItem.ID, totpTag)
+			fmt.Fprintf(&b, "[CREATE]  %s %q (bw:%s)%s\n", categoryOf(p.BWItem), p.BWItem.Name, p.BWItem.ID, totpTag)
 		case ActionUpdate:
-			fmt.Fprintf(&b, "[UPDATE] %s %q (bw:%s → op:%s)%s\n", categoryOf(p.BWItem), p.BWItem.Name, p.BWItem.ID, p.OPItemID, totpTag)
+			fmt.Fprintf(&b, "[UPDATE]  %s %q (bw:%s → op:%s)%s\n", categoryOf(p.BWItem), p.BWItem.Name, p.BWItem.ID, p.OPItemID, totpTag)
 		case ActionSkip:
-			fmt.Fprintf(&b, "[SKIP]   %q — %s\n", p.BWItem.Name, p.SkipReason)
+			fmt.Fprintf(&b, "[SKIP]    %q — %s\n", p.BWItem.Name, p.SkipReason)
+		case ActionArchive:
+			fmt.Fprintf(&b, "[ARCHIVE] %s %q (bw:%s → op:%s)\n", categoryOf(p.BWItem), p.BWItem.Name, p.BWItem.ID, p.OPItemID)
 		}
 		for _, a := range p.Attachments {
 			switch {

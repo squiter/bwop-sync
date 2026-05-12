@@ -17,6 +17,12 @@ type Entry struct {
 	BWHash      string       `json:"bw_hash"`
 	SyncedAt    string       `json:"synced_at"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+	// Archived is true when the corresponding 1Password item has been archived
+	// because the Bitwarden item was moved to BW's trash. The field is written
+	// explicitly (no omitempty) so existing entries pick up a visible
+	// `"archived": false` on the next save, which makes auditing state.json
+	// less ambiguous.
+	Archived bool `json:"archived"`
 }
 
 // Attachment records one BW attachment that bwop-sync has uploaded to 1Password.
@@ -75,8 +81,8 @@ func (s *State) Save(path string) error {
 }
 
 // Set records or updates the mapping for a BW item. Existing attachment
-// metadata is preserved — attachments are tracked separately via SetAttachments
-// so that re-syncing an item's fields does not clobber the attachment record.
+// metadata and the archived flag are preserved — both are tracked through
+// dedicated setters so a normal field-sync does not clobber them.
 func (s *State) Set(bwID, opID, hash string) {
 	existing := s.Entries[bwID]
 	s.Entries[bwID] = Entry{
@@ -84,7 +90,21 @@ func (s *State) Set(bwID, opID, hash string) {
 		BWHash:      hash,
 		SyncedAt:    time.Now().UTC().Format(time.RFC3339),
 		Attachments: existing.Attachments,
+		Archived:    existing.Archived,
 	}
+}
+
+// SetArchived flips the archived flag on an existing entry. Returns false
+// when no entry exists for bwID.
+func (s *State) SetArchived(bwID string, archived bool) bool {
+	entry, ok := s.Entries[bwID]
+	if !ok {
+		return false
+	}
+	entry.Archived = archived
+	entry.SyncedAt = time.Now().UTC().Format(time.RFC3339)
+	s.Entries[bwID] = entry
+	return true
 }
 
 // SetAttachments replaces the attachment list on an existing entry. Call this

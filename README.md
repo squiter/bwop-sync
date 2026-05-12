@@ -17,9 +17,9 @@ Syncs your Bitwarden vault to 1Password via their official CLIs.
 | Identities    | ✅     | |
 | Custom fields | ✅     | Hidden fields mapped to Concealed |
 | SSH keys      | ✅     | |
+| Attachments   | ✅     | Plain file attachments (≤1 GB). Labels with `.` `=` `[` `]` or whitespace are sanitized to `_`. See [Attachments](#attachments) |
+| Deleted items | ✅     | Archived in 1Password — see [Deleted items](#deleted-items) |
 | Passkeys      | ⚠️     | **Cannot be transferred** — see [Passkeys](#passkeys) |
-| Attachments   | 🔜     | Planned for v2 |
-| Deleted items | 🔜     | Planned for v2 — currently ignored |
 
 ---
 
@@ -353,6 +353,84 @@ adds the `bwop_sync_bw_id` field without touching any other data. After backfill
 
 ---
 
+## Attachments
+
+File attachments on Bitwarden items are uploaded to the matching 1Password item
+as plain file attachments. The sync is **incremental** — every BW attachment is
+tracked by ID in `state.json`, so only added attachments are uploaded and only
+removed attachments are deleted from 1Password on the next run.
+
+A few details worth knowing:
+
+- **Per-file cap:** files larger than 1 GB are skipped and reported as errors.
+  Anything within 1Password's plan limits should work.
+- **Label sanitization:** the 1Password CLI's assignment grammar treats `.`,
+  `=`, `[`, `]`, and whitespace as syntax characters. The original BW filename
+  is preserved in `state.json`; the 1P **field label** has those characters
+  replaced with `_`. The file content is unchanged — e.g. `notes.txt` is
+  uploaded as-is but appears with the label `notes_txt` in the 1Password UI.
+- **Attachment-only changes:** if you add or remove an attachment on a BW item
+  without touching any field, the next sync emits an `UPDATE` plan that
+  performs only the attachment ops — no wasteful item-template re-upload.
+- **Per-attachment failures are soft:** if one attachment fails to download or
+  upload, the rest of the item still syncs and the failure is recorded in the
+  sync log.
+- **Staging directory:** attachments are downloaded to
+  `~/.config/bwop-sync/tmp/<run>/<attachment>/` during the sync, then removed
+  immediately after upload. The directory is wiped at the end of every run.
+- **Recovery limitation:** `bwop-sync recover` does not yet repopulate
+  attachment metadata from 1Password. After a recover, the next sync may
+  re-upload every attachment, producing duplicates in 1Password. Full
+  attachment recovery is on the v2 roadmap.
+
+---
+
+## Deleted items
+
+When a Bitwarden item is moved to the trash (`DeletedDate` is set), bwop-sync
+**archives** the matching 1Password item — it disappears from the default item
+list but stays restorable from the 1Password archive view.
+
+The archived state is recorded in `state.json` as `"archived": true`. Re-running
+the sync is idempotent: items that are already archived are skipped silently.
+
+**Restore is manual in v1.** If you restore a previously-deleted item in
+Bitwarden, the next sync prints a SKIP plan with the reason:
+
+> BW item restored but 1P item is archived — manually unarchive in 1Password to resume sync
+
+Unarchive the item in 1Password (Settings → Archive → restore), then run
+`bwop-sync sync` again to flip the state flag and resume normal updates.
+
+Items **permanently deleted** from Bitwarden's trash are not detected in v1 —
+the state entry simply lingers harmlessly. Auto-cleanup is on the v2 roadmap.
+
+---
+
+## Debugging with `check`
+
+When something doesn't sync the way you expect, run:
+
+```bash
+bwop-sync check bw:<bitwarden-id>
+# or
+bwop-sync check op:<onepassword-id>
+```
+
+It prints a side-by-side, **structure-only** summary of the item from
+Bitwarden, 1Password, and `state.json`:
+
+- IDs, names, vault, category
+- Field labels and types — **no values**
+- Attachment names and sizes — **no contents**
+- Whether username/password/TOTP are present (yes/no, not the actual value)
+- The recorded hash prefix and last-synced timestamp
+- The archived flag
+
+No secrets are printed, so the output is safe to share when asking for help.
+
+---
+
 ## Passkeys
 
 Passkeys (FIDO2 credentials) **cannot be transferred** between password managers
@@ -438,7 +516,9 @@ bwop-sync/
 
 ## Roadmap (v2)
 
-- [ ] Sync deleted items (archive in 1Password)
-- [ ] Attachment sync
+- [ ] Auto-unarchive: restore the 1P item when a previously-deleted BW item comes back from the trash
+- [ ] Hard-delete detection: archive 1P items whose BW counterparts have been permanently deleted from the trash
+- [ ] Attachment recovery: rebuild `state.json` attachment metadata from 1Password so `bwop-sync recover` doesn't re-upload duplicates
+- [ ] Special-purpose attachment mapping (e.g. SSH keys → 1Password SSH Key category)
 - [ ] Bidirectional sync (1Password → Bitwarden)
 - [ ] Passkey sync via FIDO Alliance CXP (when both CLIs support it)

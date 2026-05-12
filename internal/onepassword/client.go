@@ -381,6 +381,21 @@ func (c *Client) DeleteFile(opID, vaultID, fieldRef string) error {
 	return nil
 }
 
+// ArchiveItem moves a 1Password item to the archive. This mirrors Bitwarden's
+// "trash" concept: the item is hidden from the default item list but can still
+// be restored from 1Password's archive view.
+// Calls `op item delete <opID> --vault <vaultID> --archive`.
+func (c *Client) ArchiveItem(opID, vaultID string) error {
+	_, err := c.run("op", "item", "delete", opID,
+		"--vault", vaultID,
+		"--archive",
+	)
+	if err != nil {
+		return fmt.Errorf("op item delete %q --archive: %w", opID, err)
+	}
+	return nil
+}
+
 // SanitizeFileLabel produces a label that op CLI's assignment parser accepts.
 // The op assignment grammar `[<section>.]<field>[<type>]=<value>` treats `.`,
 // `=`, `[`, `]`, and whitespace as structural — labels containing them fail

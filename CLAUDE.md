@@ -71,8 +71,14 @@ BW: `bw export --format json` (full plaintext export — sensitive, stored 0600)
 1P: `op item list` per vault (item titles/IDs only — no field values). Full field-level backup requires individual `op item get` calls and is v2.
 Backup failures are non-fatal — a warning is printed and the sync continues.
 
-### Deleted items
-Items with `DeletedDate != nil` are silently skipped. No tombstones in 1P. This is v2 scope.
+### Deleted items → archived in 1Password
+When a Bitwarden item has `DeletedDate != nil` (moved to BW's trash), the engine calls `op item delete <id> --vault <v> --archive`, then sets `state.Entry.Archived = true`. This is idempotent: already-archived entries are skipped silently.
+
+Restore is NOT auto-handled in v1. If a previously-archived BW item is restored (`DeletedDate` clears while `state.Archived` is still true), the engine emits a `SKIP` plan with reason "BW item restored but 1P item is archived — manually unarchive in 1Password to resume sync" and does NOT touch the 1P item. The state stays archived until the user manually un-archives.
+
+Hard deletes (item permanently deleted from BW trash, no longer in `bw list items` at all) are NOT detected in v1. The state entry simply lingers. Auto-cleanup is v2.
+
+The archived flag is written explicitly to `state.json` (no `omitempty`) so existing entries pick up `"archived": false` on the next save — easier to audit than a missing field.
 
 ### Attachment sync (per-attachment diff, separate from item-field hash)
 BW attachments sync to 1Password as plain file attachments via `op item edit <id> "<label>[file]=@<path>"`.

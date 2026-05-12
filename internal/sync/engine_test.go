@@ -63,9 +63,10 @@ type fakeOP struct {
 	created     []onepassword.Item
 	edited      []onepassword.Item
 	attachments []fakeAttachOp
-	failOn      string // "create", "edit", "ratelimit", "attach", "delete"
-	createCap   int    // stop returning success after this many creates (0 = unlimited)
-	attachCap   int    // stop returning success after this many attaches (0 = unlimited)
+	archived    []string // OP IDs that were archived
+	failOn      string   // "create", "edit", "ratelimit", "attach", "delete", "archive"
+	createCap   int      // stop returning success after this many creates (0 = unlimited)
+	attachCap   int      // stop returning success after this many attaches (0 = unlimited)
 }
 
 func (f *fakeOP) CreateItem(item onepassword.Item) (*onepassword.Item, error) {
@@ -112,6 +113,14 @@ func (f *fakeOP) DeleteFile(opID, vaultID, fieldRef string) error {
 	f.attachments = append(f.attachments, fakeAttachOp{
 		OPID: opID, VaultID: vaultID, Label: fieldRef, Action: "delete",
 	})
+	return nil
+}
+
+func (f *fakeOP) ArchiveItem(opID, vaultID string) error {
+	if f.failOn == "archive" {
+		return fmt.Errorf("injected archive error")
+	}
+	f.archived = append(f.archived, opID)
 	return nil
 }
 
@@ -374,6 +383,130 @@ func TestRun_deletedItem_ignored(t *testing.T) {
 	}
 	if len(report.Plans) != 0 {
 		t.Errorf("expected no plans for deleted item, got %d", len(report.Plans))
+	}
+}
+
+func TestRun_deletedItem_withState_archivesInOP(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	st.Set("bw-1", "op-existing", "any-hash")
+
+	deletedDate := "2026-01-01T00:00:00Z"
+	bwItem := bitwarden.Item{
+		ID:          "bw-1",
+		Type:        bitwarden.TypeLogin,
+		Name:        "Going Away",
+		Login:       &bitwarden.Login{},
+		DeletedDate: &deletedDate,
+	}
+
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(op.archived) != 1 || op.archived[0] != "op-existing" {
+		t.Errorf("expected ArchiveItem(\"op-existing\"), got %v", op.archived)
+	}
+	if len(report.Plans) != 1 || report.Plans[0].Action != ActionArchive {
+		t.Fatalf("expected ARCHIVE plan, got %+v", report.Plans)
+	}
+	entry, _ := st.Get("bw-1")
+	if !entry.Archived {
+		t.Error("state should record Archived=true after successful archive")
+	}
+}
+
+func TestRun_deletedItem_alreadyArchived_isIdempotent(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	st.Set("bw-1", "op-existing", "any-hash")
+	st.SetArchived("bw-1", true)
+
+	deletedDate := "2026-01-01T00:00:00Z"
+	bwItem := bitwarden.Item{
+		ID:          "bw-1",
+		Type:        bitwarden.TypeLogin,
+		Name:        "Going Away",
+		Login:       &bitwarden.Login{},
+		DeletedDate: &deletedDate,
+	}
+
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(op.archived) != 0 {
+		t.Errorf("already-archived item must not re-archive, got %v", op.archived)
+	}
+	if len(report.Plans) != 0 {
+		t.Errorf("expected no plan for already-archived item, got %+v", report.Plans)
+	}
+}
+
+func TestRun_restoredItem_emitsSkipWithWarning(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	st.Set("bw-1", "op-existing", "any-hash")
+	st.SetArchived("bw-1", true)
+
+	// BW item is live (DeletedDate == nil) but state says archived.
+	bwItem := loginItem("bw-1", "Restored", "user", "pass")
+
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(op.created)+len(op.edited)+len(op.archived) != 0 {
+		t.Errorf("restored item must not write to OP; got create=%d edit=%d archive=%d",
+			len(op.created), len(op.edited), len(op.archived))
+	}
+	if len(report.Plans) != 1 || report.Plans[0].Action != ActionSkip {
+		t.Fatalf("expected SKIP plan, got %+v", report.Plans)
+	}
+	if !strings.Contains(report.Plans[0].SkipReason, "manually unarchive") {
+		t.Errorf("expected restore-warning skip reason, got %q", report.Plans[0].SkipReason)
+	}
+	entry, _ := st.Get("bw-1")
+	if !entry.Archived {
+		t.Error("state should remain archived until user manually unarchives")
+	}
+}
+
+func TestRun_dryRun_archive_doesNotCallOP(t *testing.T) {
+	op := &fakeOP{}
+	st := freshState()
+	st.Set("bw-1", "op-existing", "h")
+
+	deletedDate := "2026-01-01T00:00:00Z"
+	bwItem := bitwarden.Item{
+		ID:          "bw-1",
+		Type:        bitwarden.TypeLogin,
+		Name:        "Going Away",
+		Login:       &bitwarden.Login{},
+		DeletedDate: &deletedDate,
+	}
+
+	engine := newTestEngine(&fakeBW{items: []bitwarden.Item{bwItem}}, op, personalConfig(), st, t.TempDir())
+	report, err := engine.Run(true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(op.archived) != 0 {
+		t.Error("dry-run must not call ArchiveItem")
+	}
+	if len(report.Plans) != 1 || report.Plans[0].Action != ActionArchive {
+		t.Errorf("expected ARCHIVE plan in dry-run, got %+v", report.Plans)
+	}
+	entry, _ := st.Get("bw-1")
+	if entry.Archived {
+		t.Error("dry-run must not mutate state")
 	}
 }
 

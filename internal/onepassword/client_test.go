@@ -239,6 +239,36 @@ func TestDeleteFile_buildsDeleteExpression(t *testing.T) {
 	}
 }
 
+// --- ArchiveItem ---
+
+func TestArchiveItem_buildsCorrectArgs(t *testing.T) {
+	var calls [][]string
+	c := newWithRunner(captureArgs(``, &calls))
+
+	if err := c.ArchiveItem("op-id", "vault-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	args := calls[0]
+	if !hasArg(args, "delete") || !hasArg(args, "op-id") {
+		t.Errorf("expected `op item delete op-id` in args: %v", args)
+	}
+	if !hasFlag(args, "--vault", "vault-1") {
+		t.Errorf("expected --vault vault-1: %v", args)
+	}
+	if !hasArg(args, "--archive") {
+		t.Errorf("expected --archive flag (not a hard delete): %v", args)
+	}
+}
+
+func TestArchiveItem_cliError(t *testing.T) {
+	c := newWithRunner(func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("op cli error")
+	})
+	if err := c.ArchiveItem("op-id", "v1"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 // --- GrantVaultAccess ---
 
 func TestGrantVaultAccess_passesVaultUserAndPermissions(t *testing.T) {
