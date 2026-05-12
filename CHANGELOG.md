@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-05-12
+
+### Added
+- Deleted items are now archived in 1Password instead of being silently ignored. When a Bitwarden item has `DeletedDate` set (in BW's trash), bwop-sync calls `op item delete <id> --vault <v> --archive`, then records `archived: true` in `state.json`. The operation is idempotent — already-archived entries are skipped on subsequent runs. New `ARCHIVE` action shows up in the sync log and dry-run output as a first-class outcome.
+- `bwop-sync check` now reports the archived flag in the state section.
+
+### Changed
+- `state.json` entries gain an explicit `"archived": false` field on the next save (no `omitempty`), so the flag is always visible when auditing the file. Existing entries pick this up automatically without a migration.
+
+### Notes
+- v1 does not auto-unarchive. If a previously-deleted BW item is restored, the engine emits a SKIP plan asking the user to manually un-archive in 1Password. Auto-restore is on the v2 roadmap.
+- Items permanently deleted from BW's trash (gone from `bw list items` entirely) are not detected in v1 — the state entry lingers harmlessly. Auto-cleanup is on the v2 roadmap.
+
 ## [0.15.0] - 2026-05-12
 
 ### Added
@@ -206,7 +219,8 @@ Re-run `bwop-setup` and choose to reinstall the LaunchAgent when prompted. It wi
 - GitHub Actions release workflow — triggers on `v*` tags, cross-compiles for darwin/amd64 and darwin/arm64, publishes GitHub Release with binaries and checksums
 - Makefile with `build`, `setup`, `sync`, `dry-run`, `test`, `install`, `clean` targets
 
-[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/squiter/bwop-sync/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/squiter/bwop-sync/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/squiter/bwop-sync/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/squiter/bwop-sync/compare/v0.12.1...v0.13.0
