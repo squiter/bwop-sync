@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-05-14
+
+### Fixed
+- Deleted Bitwarden items are now actually considered during sync by listing trash items with `bw list items --trash` in addition to live items. This makes the existing 1Password archive flow reachable for real deleted logins instead of only for tests.
+
 ## [0.16.0] - 2026-05-12
 
 ### Added
@@ -219,7 +224,8 @@ Re-run `bwop-setup` and choose to reinstall the LaunchAgent when prompted. It wi
 - GitHub Actions release workflow — triggers on `v*` tags, cross-compiles for darwin/amd64 and darwin/arm64, publishes GitHub Release with binaries and checksums
 - Makefile with `build`, `setup`, `sync`, `dry-run`, `test`, `install`, `clean` targets
 
-[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/squiter/bwop-sync/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/squiter/bwop-sync/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/squiter/bwop-sync/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/squiter/bwop-sync/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/squiter/bwop-sync/compare/v0.13.0...v0.14.0

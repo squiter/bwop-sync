@@ -66,12 +66,32 @@ func (c *Client) GetItem(id string) (*Item, error) {
 	return &item, nil
 }
 
-// ListItems returns all vault items accessible to the current session.
-// Both personal and organisation items are included.
+// ListItems returns all vault items accessible to the current session,
+// including deleted items in Bitwarden's trash. Both personal and organisation
+// items are included.
 func (c *Client) ListItems() ([]Item, error) {
-	out, err := c.run("bw", "list", "items", "--session", c.session)
+	live, err := c.listItems()
 	if err != nil {
-		return nil, fmt.Errorf("bw list items: %w", err)
+		return nil, err
+	}
+
+	trash, err := c.listItems("--trash")
+	if err != nil {
+		return nil, err
+	}
+
+	items := append(live, trash...)
+	return items, nil
+}
+
+func (c *Client) listItems(filters ...string) ([]Item, error) {
+	args := []string{"list", "items"}
+	args = append(args, filters...)
+	args = append(args, "--session", c.session)
+
+	out, err := c.run("bw", args...)
+	if err != nil {
+		return nil, fmt.Errorf("bw %s: %w", strings.Join(args[:len(args)-2], " "), err)
 	}
 
 	var items []Item

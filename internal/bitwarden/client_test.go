@@ -2,16 +2,32 @@ package bitwarden
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 )
 
+func hasArg(args []string, value string) bool {
+	for _, arg := range args {
+		if arg == value {
+			return true
+		}
+	}
+	return false
+}
+
 func TestListItems_success(t *testing.T) {
-	payload := `[
+	livePayload := `[
 		{"id":"abc","type":1,"name":"GitHub","login":{"username":"user@example.com","password":"s3cr3t","totp":"","uris":[{"uri":"https://github.com"}],"fido2Credentials":[]}}
 	]`
+	trashPayload := `[]`
+	var calls [][]string
 
 	c := newWithRunner("test-session", func(name string, args ...string) ([]byte, error) {
-		return []byte(payload), nil
+		calls = append(calls, append([]string{name}, args...))
+		if hasArg(args, "--trash") {
+			return []byte(trashPayload), nil
+		}
+		return []byte(livePayload), nil
 	})
 
 	items, err := c.ListItems()
@@ -30,6 +46,41 @@ func TestListItems_success(t *testing.T) {
 	if items[0].Login.Username != "user@example.com" {
 		t.Errorf("unexpected username: %q", items[0].Login.Username)
 	}
+	wantCalls := [][]string{
+		{"bw", "list", "items", "--session", "test-session"},
+		{"bw", "list", "items", "--trash", "--session", "test-session"},
+	}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Errorf("unexpected bw calls:\nwant %#v\ngot  %#v", wantCalls, calls)
+	}
+}
+
+func TestListItems_includesTrash(t *testing.T) {
+	deletedDate := "2026-01-01T00:00:00Z"
+	c := newWithRunner("test-session", func(name string, args ...string) ([]byte, error) {
+		if hasArg(args, "--trash") {
+			return []byte(fmt.Sprintf(`[
+				{"id":"deleted","type":1,"name":"Deleted Login","deletedDate":%q,"login":{}}
+			]`, deletedDate)), nil
+		}
+		return []byte(`[
+			{"id":"live","type":1,"name":"Live Login","login":{}}
+		]`), nil
+	})
+
+	items, err := c.ListItems()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected live + trash items, got %d: %+v", len(items), items)
+	}
+	if items[0].ID != "live" || items[1].ID != "deleted" {
+		t.Fatalf("unexpected item order/content: %+v", items)
+	}
+	if items[1].DeletedDate == nil || *items[1].DeletedDate != deletedDate {
+		t.Fatalf("expected deletedDate from trash item, got %+v", items[1].DeletedDate)
+	}
 }
 
 func TestListItems_cliError(t *testing.T) {
@@ -45,6 +96,9 @@ func TestListItems_cliError(t *testing.T) {
 
 func TestListItems_invalidJSON(t *testing.T) {
 	c := newWithRunner("test-session", func(name string, args ...string) ([]byte, error) {
+		if hasArg(args, "--trash") {
+			return []byte(`[]`), nil
+		}
 		return []byte(`not json`), nil
 	})
 
@@ -165,6 +219,9 @@ func TestListItems_parsesAttachments(t *testing.T) {
 		]}
 	]`
 	c := newWithRunner("s", func(name string, args ...string) ([]byte, error) {
+		if hasArg(args, "--trash") {
+			return []byte(`[]`), nil
+		}
 		return []byte(payload), nil
 	})
 
